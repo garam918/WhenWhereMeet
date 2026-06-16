@@ -1,0 +1,226 @@
+package com.garam.whenwheremeet.presentation.screen
+
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import com.garam.whenwheremeet.domain.model.LocationSearchResult
+import com.garam.whenwheremeet.domain.model.MeetingStatus
+import com.garam.whenwheremeet.domain.model.TransportMode
+import com.garam.whenwheremeet.domain.model.PlaceCandidate
+import com.garam.whenwheremeet.domain.model.PlaceVoteType
+import com.garam.whenwheremeet.presentation.component.AvailabilityCalendar
+import com.garam.whenwheremeet.presentation.component.AvailabilityLegend
+import com.garam.whenwheremeet.presentation.component.ConfirmedMeetingCard
+import com.garam.whenwheremeet.presentation.component.PlaceRecommendationTab
+import com.garam.whenwheremeet.presentation.component.SectionTitle
+import com.garam.whenwheremeet.presentation.component.StatusPill
+import com.garam.whenwheremeet.presentation.component.WwmBackground
+import com.garam.whenwheremeet.presentation.component.WwmCard
+import com.garam.whenwheremeet.presentation.component.WwmIndigo
+import com.garam.whenwheremeet.presentation.component.WwmMuted
+import com.garam.whenwheremeet.presentation.component.WwmOutlineButton
+import com.garam.whenwheremeet.presentation.component.WwmPrimaryButton
+import com.garam.whenwheremeet.presentation.component.WwmText
+import com.garam.whenwheremeet.presentation.component.WwmTopBar
+import com.garam.whenwheremeet.presentation.state.MeetingRoomUiState
+import com.garam.whenwheremeet.presentation.state.toKoreanDate
+import kotlinx.datetime.LocalDate
+
+private enum class MeetingRoomTab(val label: String) {
+    DATE("날짜"),
+    PLACE("장소"),
+    PARTICIPANTS("참여자"),
+}
+
+@Composable
+fun MeetingRoomScreen(
+    state: MeetingRoomUiState,
+    onBack: () -> Unit,
+    onCycleDate: (LocalDate) -> Unit,
+    onSelectDate: (LocalDate) -> Unit,
+    onSave: () -> Unit,
+    onConfirm: (LocalDate) -> Unit,
+    onShare: () -> Unit,
+    onSearchLocations: (String) -> Unit,
+    onUseCurrentLocation: () -> Unit,
+    onSaveStartLocation: (LocationSearchResult) -> Unit,
+    onSaveTransportMode: (TransportMode) -> Unit,
+    onCalculateAreas: () -> Unit,
+    onSelectArea: (String) -> Unit,
+    onSearchPlaces: () -> Unit,
+    onVotePlace: (String, PlaceVoteType) -> Unit,
+    onConfirmPlace: (PlaceCandidate) -> Unit,
+    onOpenMap: (PlaceCandidate) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val room = state.room
+    var selectedTab by remember { mutableStateOf(MeetingRoomTab.DATE) }
+    Column(modifier.fillMaxSize().background(WwmBackground)) {
+        WwmTopBar(
+            title = "어디서봐",
+            leadingText = "‹",
+            onLeadingClick = onBack,
+            trailingText = "↗",
+            onTrailingClick = onShare,
+        )
+        Column(
+            Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(room.title, color = WwmText, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                    room.description?.let { Text(it, color = WwmMuted) }
+                }
+                StatusPill(
+                    when (room.status) {
+                        MeetingStatus.PLACE_SELECTING -> "지역 선택 중"
+                        MeetingStatus.PLACE_CONFIRMED -> "장소 확정"
+                        MeetingStatus.DATE_CONFIRMED -> "날짜 확정"
+                        else -> "날짜 조율 중"
+                    },
+                )
+            }
+            Text("${room.meetingType.label} · 참여자 ${state.participants.size}명 · 방 코드 ${room.id}", color = WwmMuted)
+            Text("후보 기간 ${room.dateRangeStart} ~ ${room.dateRangeEnd}", color = WwmMuted)
+            room.responseDeadline?.let { Text("응답 마감 $it", color = WwmMuted) }
+
+            if (room.confirmedDate != null) ConfirmedMeetingCard(room, state.participants.size)
+
+            Row(
+                Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.secondaryContainer, androidx.compose.foundation.shape.RoundedCornerShape(999.dp)).padding(3.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                MeetingRoomTab.entries.forEach { tab ->
+                    FilterChip(
+                        selected = selectedTab == tab,
+                        onClick = { selectedTab = tab },
+                        label = { Text(tab.label) },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            }
+
+            when (selectedTab) {
+                MeetingRoomTab.DATE -> DateTab(state, onCycleDate, onSelectDate, onSave, onConfirm)
+                MeetingRoomTab.PLACE -> PlaceRecommendationTab(
+                    state = state,
+                    onSearchLocations = onSearchLocations,
+                    onUseCurrentLocation = onUseCurrentLocation,
+                    onSaveStartLocation = onSaveStartLocation,
+                    onSaveTransportMode = onSaveTransportMode,
+                    onCalculateAreas = onCalculateAreas,
+                    onSelectArea = onSelectArea,
+                    onSearchPlaces = onSearchPlaces,
+                    onVotePlace = onVotePlace,
+                    onConfirmPlace = onConfirmPlace,
+                    onOpenMap = onOpenMap,
+                    onShare = onShare,
+                )
+                MeetingRoomTab.PARTICIPANTS -> ParticipantsTab(state)
+            }
+            Spacer(Modifier.height(20.dp))
+        }
+    }
+}
+
+@Composable
+private fun DateTab(
+    state: MeetingRoomUiState,
+    onCycleDate: (LocalDate) -> Unit,
+    onSelectDate: (LocalDate) -> Unit,
+    onSave: () -> Unit,
+    onConfirm: (LocalDate) -> Unit,
+) {
+    val room = state.room
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        SectionTitle("내 가능한 날짜")
+        Text("날짜를 누르면 미선택 → 가능 → 애매 → 불가능 순서로 바뀝니다.", style = MaterialTheme.typography.bodySmall)
+        AvailabilityLegend()
+        AvailabilityCalendar(
+            startDate = room.dateRangeStart,
+            endDate = room.dateRangeEnd,
+            selectedValues = state.selectedAvailability,
+            summaries = state.summaries,
+            onDateClick = { onCycleDate(it); onSelectDate(it) },
+        )
+        WwmPrimaryButton("응답 저장", onSave)
+        SectionTitle("추천 날짜 TOP 3")
+        state.recommendations.forEach { recommendation ->
+            val summary = recommendation.summary
+            WwmCard(modifier = Modifier.fillMaxWidth(), onClick = { onSelectDate(summary.date) }) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    if (recommendation.rank == 1) StatusPill("☆ 1순위")
+                    Text("${summary.date.toKoreanDate()}", color = WwmText, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text("가능 ${summary.availableParticipants.size}/${summary.totalParticipants} · 애매 ${summary.maybeParticipants.size} · 점수 ${summary.score}")
+                    Text(recommendation.reason, color = WwmMuted, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+        state.selectedSummary?.let { summary ->
+            SectionTitle("${summary.date.toKoreanDate()} 상세")
+            WwmCard(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("추천 점수 ${summary.score}점", fontWeight = FontWeight.Bold)
+                    Text("가능: ${summary.availableParticipants.namesOrNone()}")
+                    Text("애매: ${summary.maybeParticipants.namesOrNone()}")
+                    Text("불가능: ${summary.unavailableParticipants.namesOrNone()}")
+                    Text("미응답: ${summary.unansweredParticipants.namesOrNone()}")
+                    Text(if (summary.allRequiredAvailable) "필수 참석자 가능" else "필수 참석자 확인 필요")
+                    if (state.currentParticipant.isHost && room.confirmedDate == null) {
+                        WwmPrimaryButton("이 날짜로 확정하기", { onConfirm(summary.date) })
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ParticipantsTab(state: MeetingRoomUiState) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        SectionTitle("참여자 ${state.participants.size}명")
+        WwmCard(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp)) {
+                state.participants.forEachIndexed { index, participant ->
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(participant.nickname)
+                        Text(
+                            listOfNotNull("방장".takeIf { participant.isHost }, "필수".takeIf { participant.isRequired }).joinToString(" · "),
+                            style = MaterialTheme.typography.labelMedium,
+                        )
+                    }
+                    if (index < state.participants.lastIndex) HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                }
+            }
+        }
+    }
+}
+
+private fun List<com.garam.whenwheremeet.domain.model.Participant>.namesOrNone(): String =
+    joinToString { it.nickname }.ifBlank { "없음" }
