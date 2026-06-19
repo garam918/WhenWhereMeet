@@ -26,27 +26,46 @@ import com.garam.whenwheremeet.domain.provider.LocationSearchProvider
 import com.garam.whenwheremeet.domain.provider.PlaceSearchProvider
 import com.garam.whenwheremeet.domain.repository.MeetingRepository
 import com.garam.whenwheremeet.domain.usecase.AggregateAvailabilityUseCase
+import com.garam.whenwheremeet.domain.usecase.BuildCalendarMonthUseCase
+import com.garam.whenwheremeet.domain.usecase.BuildHomeDashboardUseCase
 import com.garam.whenwheremeet.domain.usecase.CycleAvailabilityStatusUseCase
+import com.garam.whenwheremeet.domain.usecase.CalendarFilter
+import com.garam.whenwheremeet.domain.usecase.CalendarMonth
+import com.garam.whenwheremeet.domain.usecase.MeetingOverview
 import com.garam.whenwheremeet.domain.usecase.RecommendDatesUseCase
 import com.garam.whenwheremeet.domain.usecase.RecommendMeetingAreasUseCase
 import com.garam.whenwheremeet.domain.usecase.BuildConfirmedMeetingShareTextUseCase
 import com.garam.whenwheremeet.domain.usecase.ScorePlaceCandidatesUseCase
 import com.garam.whenwheremeet.domain.usecase.SortPlacesByVotesUseCase
+import com.garam.whenwheremeet.platform.currentLocalDate
+import kotlinx.coroutines.flow.collect
 import kotlinx.datetime.LocalDate
 import kotlin.random.Random
 import kotlin.time.Clock
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.Instant
 
 sealed interface AppRoute {
     data object Home : AppRoute
+    data object Calendar : AppRoute
+    data object MyPage : AppRoute
     data object CreateRoom : AppRoute
     data class JoinRoom(val roomCode: String = "") : AppRoute
     data class MeetingRoom(val roomId: String) : AppRoute
 }
 
 sealed interface UiAction {
+    data object OpenHome : UiAction
+    data object OpenCalendar : UiAction
+    data object OpenMyPage : UiAction
     data object OpenCreateRoom : UiAction
     data class OpenJoinRoom(val roomCode: String = "") : UiAction
     data class OpenRoom(val roomId: String) : UiAction
+    data class SelectCalendarDate(val date: LocalDate) : UiAction
+    data object OpenPreviousCalendarMonth : UiAction
+    data object OpenNextCalendarMonth : UiAction
+    data object OpenTodayCalendarMonth : UiAction
+    data class ChangeCalendarFilter(val filter: CalendarFilter) : UiAction
     data object NavigateBack : UiAction
 }
 
@@ -55,8 +74,6 @@ sealed interface UiEvent {
     data class Share(val text: String) : UiEvent
     data class OpenMap(val place: PlaceCandidate) : UiEvent
 }
-
-data class HomeUiState(val rooms: List<MeetingRoom>)
 
 data class MeetingRoomUiState(
     val room: MeetingRoom,
@@ -85,6 +102,7 @@ data class CreateRoomInput(
     val startDate: LocalDate,
     val endDate: LocalDate,
     val minParticipants: Int,
+    val maxParticipants: Int,
     val responseDeadline: LocalDate?,
     val hostIsRequired: Boolean,
 )
@@ -101,21 +119,92 @@ class MeetingAppState(
     private val scorePlaces: ScorePlaceCandidatesUseCase = ScorePlaceCandidatesUseCase(),
     private val sortPlacesByVotes: SortPlacesByVotesUseCase = SortPlacesByVotesUseCase(),
     private val buildConfirmedShareText: BuildConfirmedMeetingShareTextUseCase = BuildConfirmedMeetingShareTextUseCase(),
+    private val buildHomeDashboard: BuildHomeDashboardUseCase = BuildHomeDashboardUseCase(),
+    private val buildCalendarMonth: BuildCalendarMonthUseCase = BuildCalendarMonthUseCase(),
 ) {
     var route: AppRoute by mutableStateOf(AppRoute.Home)
         private set
+    private var backStack by mutableStateOf<List<AppRoute>>(emptyList())
     var event: UiEvent? by mutableStateOf(null)
         private set
     private var revision by mutableStateOf(0)
     private var availabilityDraft by mutableStateOf<Map<LocalDate, AvailabilityStatus>>(emptyMap())
     private var selectedDate by mutableStateOf<LocalDate?>(null)
+    private var calendarMonth by mutableStateOf(CalendarMonth.from(currentLocalDate()))
+    private var calendarSelectedDate by mutableStateOf(currentLocalDate())
+    private var calendarFilter by mutableStateOf(CalendarFilter.ALL)
     private var locationSearchResults by mutableStateOf<List<LocationSearchResult>>(emptyList())
     private var isCalculatingAreas by mutableStateOf(false)
     private var isSearchingPlaces by mutableStateOf(false)
+    private var lastManualRefreshAt: Instant? = null
 
-    fun homeUiState(): HomeUiState {
+    fun homeUiState(): HomeDashboardUiState {
         revision
-        return HomeUiState(repository.getRooms())
+        val dashboard = buildHomeDashboard(meetingOverviews(), currentLocalDate())
+        return HomeDashboardUiState(
+            summary = HomeSummaryUiModel(
+                confirmedCount = dashboard.summary.confirmedCount,
+                pendingResponseCount = dashboard.summary.pendingResponseCount,
+                placeVoteRequiredCount = dashboard.summary.placeVoteRequiredCount,
+            ),
+            actionItems = dashboard.actionItems.map {
+                HomeActionItemUiModel(
+                    roomId = it.roomId,
+                    title = it.title,
+                    actionType = it.actionType,
+                    statusText = it.statusText,
+                    description = it.description,
+                    dueText = it.dueText,
+                    ctaText = it.ctaText,
+                )
+            },
+            upcomingConfirmedMeetings = dashboard.upcomingConfirmedMeetings.map { it.toUiModel() },
+            inProgressMeetings = dashboard.inProgressMeetings.map { it.toUiModel() },
+        )
+    }
+
+    fun calendarUiState(): CalendarUiState {
+        revision
+        val calendar = buildCalendarMonth(
+            meetings = meetingOverviews(),
+            currentMonth = calendarMonth,
+            selectedDate = calendarSelectedDate,
+            today = currentLocalDate(),
+            filter = calendarFilter,
+        )
+        return CalendarUiState(
+            currentMonth = calendar.currentMonth,
+            selectedDate = calendar.selectedDate,
+            filter = calendar.filter,
+            monthlySummary = CalendarMonthlySummaryUiModel(
+                confirmedCount = calendar.monthlySummary.confirmedCount,
+                inProgressCount = calendar.monthlySummary.inProgressCount,
+                myActionRequiredCount = calendar.monthlySummary.myActionRequiredCount,
+            ),
+            dayItems = calendar.dayItems.map {
+                CalendarDayUiModel(
+                    date = it.date,
+                    isToday = it.isToday,
+                    isSelected = it.isSelected,
+                    indicators = it.indicators,
+                )
+            },
+            selectedDateMeetings = calendar.selectedDateMeetings.map {
+                CalendarMeetingItemUiModel(
+                    roomId = it.roomId,
+                    title = it.title,
+                    statusText = it.statusText,
+                    dateText = it.dateText,
+                    timeText = it.timeText,
+                    placeText = it.placeText,
+                    participantText = it.participantText,
+                    responseText = it.responseText,
+                    actionType = it.actionType,
+                    ctaText = it.ctaText,
+                    isConfirmed = it.isConfirmed,
+                )
+            },
+        )
     }
 
     fun roomUiState(roomId: String): MeetingRoomUiState? {
@@ -152,20 +241,42 @@ class MeetingAppState(
 
     fun dispatch(action: UiAction) {
         when (action) {
-            UiAction.OpenCreateRoom -> route = AppRoute.CreateRoom
-            is UiAction.OpenJoinRoom -> route = AppRoute.JoinRoom(action.roomCode)
+            UiAction.OpenHome -> navigateTo(AppRoute.Home)
+            UiAction.OpenCalendar -> navigateTo(AppRoute.Calendar)
+            UiAction.OpenMyPage -> navigateTo(AppRoute.MyPage)
+            UiAction.OpenCreateRoom -> navigateTo(AppRoute.CreateRoom)
+            is UiAction.OpenJoinRoom -> navigateTo(AppRoute.JoinRoom(action.roomCode))
             is UiAction.OpenRoom -> openRoom(action.roomId)
-            UiAction.NavigateBack -> route = AppRoute.Home
+            is UiAction.SelectCalendarDate -> calendarSelectedDate = action.date
+            UiAction.OpenPreviousCalendarMonth -> {
+                calendarMonth = calendarMonth.previous()
+                calendarSelectedDate = calendarMonth.firstDay
+            }
+            UiAction.OpenNextCalendarMonth -> {
+                calendarMonth = calendarMonth.next()
+                calendarSelectedDate = calendarMonth.firstDay
+            }
+            UiAction.OpenTodayCalendarMonth -> {
+                val today = currentLocalDate()
+                calendarMonth = CalendarMonth.from(today)
+                calendarSelectedDate = today
+            }
+            is UiAction.ChangeCalendarFilter -> calendarFilter = action.filter
+            UiAction.NavigateBack -> navigateBack()
         }
     }
 
-    fun createRoom(input: CreateRoomInput) {
+    suspend fun createRoom(input: CreateRoomInput) {
         if (input.hostNickname.isBlank() || input.title.isBlank()) {
             emitMessage("방장 닉네임과 약속 이름을 입력해주세요.")
             return
         }
         if (input.endDate < input.startDate) {
             emitMessage("종료일은 시작일보다 빠를 수 없습니다.")
+            return
+        }
+        if (input.maxParticipants < 2) {
+            emitMessage("최대 인원은 2명 이상으로 설정해주세요.")
             return
         }
         val now = Clock.System.now()
@@ -179,6 +290,7 @@ class MeetingAppState(
             dateRangeStart = input.startDate,
             dateRangeEnd = input.endDate,
             minParticipants = input.minParticipants.coerceAtLeast(1),
+            maxParticipants = input.maxParticipants.coerceAtLeast(2),
             responseDeadline = input.responseDeadline,
             hostParticipantId = hostId,
             requiredParticipantIds = if (input.hostIsRequired) listOf(hostId) else emptyList(),
@@ -194,13 +306,17 @@ class MeetingAppState(
             isRequired = input.hostIsRequired,
             joinedAt = now,
         )
-        repository.createRoom(room, host)
-        revision++
-        openRoom(roomId)
+        runCatching { repository.createRoom(room, host) }
+            .onSuccess {
+                revision++
+                openRoom(roomId, replaceCurrent = true)
+                emitMessage("약속방을 만들었습니다. 코드를 공유해 참여자를 초대하세요.")
+            }
+            .onFailure { emitMessage(it.meetingRepositoryErrorMessage("약속방을 만들지 못했습니다.")) }
     }
 
-    fun joinRoom(roomCode: String, nickname: String) {
-        val room = repository.getRoom(roomCode)
+    suspend fun joinRoom(roomCode: String, nickname: String) {
+        val room = repository.getRoomForJoin(roomCode)
         if (room == null) {
             emitMessage("방 코드를 확인해주세요.")
             return
@@ -220,9 +336,73 @@ class MeetingAppState(
         runCatching { repository.joinRoom(participant) }
             .onSuccess {
                 revision++
-                openRoom(room.id)
+                openRoom(room.id, replaceCurrent = true)
             }
-            .onFailure { emitMessage(it.message ?: "참여하지 못했습니다.") }
+            .onFailure { emitMessage(it.meetingRepositoryErrorMessage("참여하지 못했습니다.")) }
+    }
+
+    suspend fun leaveRoom(roomId: String) {
+        val participantId = repository.getCurrentParticipantId(roomId) ?: return
+        runCatching { repository.leaveRoom(roomId, participantId) }
+            .onSuccess {
+                revision++
+                backStack = emptyList()
+                route = AppRoute.Home
+                emitMessage("약속방에서 나갔습니다.")
+            }
+            .onFailure { emitMessage(it.meetingRepositoryErrorMessage("약속방에서 나가지 못했습니다.")) }
+    }
+
+    suspend fun deleteRoom(roomId: String) {
+        val room = repository.getRoom(roomId) ?: return
+        if (repository.getCurrentParticipantId(roomId) != room.hostParticipantId) {
+            emitMessage("방장만 약속을 삭제할 수 있습니다.")
+            return
+        }
+        runCatching { repository.deleteRoom(roomId) }
+            .onSuccess {
+                revision++
+                backStack = emptyList()
+                route = AppRoute.Home
+                emitMessage("약속을 삭제했습니다.")
+            }
+            .onFailure { emitMessage(it.meetingRepositoryErrorMessage("약속을 삭제하지 못했습니다.")) }
+    }
+
+    suspend fun refreshRoom(roomId: String) {
+        runCatching { repository.refreshRoom(roomId) }
+            .onSuccess { revision++ }
+    }
+
+    fun handleCurrentRoomUnavailable(roomId: String) {
+        if (route != AppRoute.MeetingRoom(roomId)) return
+        backStack = emptyList()
+        route = AppRoute.Home
+        revision++
+        emitMessage("약속방 정보를 찾을 수 없어요.")
+    }
+
+    suspend fun collectRoomUpdates(roomId: String) {
+        repository.observeRoom(roomId).collect {
+            revision++
+        }
+    }
+
+    suspend fun refreshDashboard() {
+        val now = Clock.System.now()
+        val lastRefresh = lastManualRefreshAt
+        if (lastRefresh != null && now - lastRefresh < MANUAL_REFRESH_COOLDOWN) {
+            val remainingSeconds = (MANUAL_REFRESH_COOLDOWN - (now - lastRefresh)).inWholeSeconds.coerceAtLeast(1)
+            emitMessage("새로고침은 ${remainingSeconds}초 후에 다시 할 수 있어요.")
+            return
+        }
+        runCatching { repository.refreshRooms() }
+            .onSuccess {
+                lastManualRefreshAt = now
+                revision++
+                emitMessage("최신 약속 정보를 불러왔어요.")
+            }
+            .onFailure { emitMessage(it.meetingRepositoryErrorMessage("약속 정보를 새로고침하지 못했습니다.")) }
     }
 
     fun cycleAvailability(date: LocalDate) {
@@ -230,27 +410,33 @@ class MeetingAppState(
         availabilityDraft = if (next == null) availabilityDraft - date else availabilityDraft + (date to next)
     }
 
-    fun saveAvailability(roomId: String) {
+    suspend fun saveAvailability(roomId: String) {
         val participantId = repository.getCurrentParticipantId(roomId) ?: return
-        repository.saveAvailabilities(roomId, participantId, availabilityDraft)
-        revision++
-        emitMessage("가능한 날짜를 저장했습니다.")
+        runCatching { repository.saveAvailabilities(roomId, participantId, availabilityDraft) }
+            .onSuccess {
+                revision++
+                emitMessage("가능한 날짜를 저장했습니다.")
+            }
+            .onFailure { emitMessage(it.meetingRepositoryErrorMessage("가능한 날짜를 저장하지 못했습니다.")) }
     }
 
     fun selectDate(date: LocalDate) {
         selectedDate = date
     }
 
-    fun confirmDate(roomId: String, date: LocalDate) {
+    suspend fun confirmDate(roomId: String, date: LocalDate) {
         val room = repository.getRoom(roomId) ?: return
         if (repository.getCurrentParticipantId(roomId) != room.hostParticipantId) {
             emitMessage("방장만 날짜를 확정할 수 있습니다.")
             return
         }
-        repository.confirmDate(roomId, date)
-        eventPublisher.publish(MeetingEvent.DateConfirmed(roomId, date, Clock.System.now()))
-        revision++
-        emitMessage("약속 날짜를 확정했습니다.")
+        runCatching { repository.confirmDate(roomId, date) }
+            .onSuccess {
+                eventPublisher.publish(MeetingEvent.DateConfirmed(roomId, date, Clock.System.now()))
+                revision++
+                emitMessage("약속 날짜를 확정했습니다.")
+            }
+            .onFailure { emitMessage(it.meetingRepositoryErrorMessage("약속 날짜를 확정하지 못했습니다.")) }
     }
 
     suspend fun searchLocations(query: String) {
@@ -399,6 +585,15 @@ class MeetingAppState(
         }
     }
 
+    fun openConfirmedPlaceMap(roomId: String) {
+        val place = repository.getRoom(roomId)?.confirmedPlace
+        if (place == null) {
+            emitMessage("확정된 장소가 아직 없습니다.")
+        } else {
+            openMap(place)
+        }
+    }
+
     fun requestShare(roomId: String) {
         val room = repository.getRoom(roomId) ?: return
         val participantCount = repository.getParticipants(roomId).size
@@ -407,7 +602,7 @@ class MeetingAppState(
         } else if (room.confirmedDate != null) {
             "[약속 확정]\n약속명: ${room.title}\n날짜: ${room.confirmedDate.toKoreanDate()}\n참여자: ${participantCount}명\n\n자세히 보기:\nwhenwheremeet://room/${room.id}"
         } else {
-            "[약속 조율 요청]\n약속명: ${room.title}\n가능한 날짜를 선택해주세요.\n\n참여하기:\nwhenwheremeet://room/${room.id}\n방 코드: ${room.id}"
+            "[약속 조율 요청]\n약속명: ${room.title}\n가능한 날짜를 선택해주세요.\n\n참여하기:\nwhenwheremeet://room/${room.id}\n방 코드: ${room.id}\n\n앱이 없다면 설치 후 방 코드를 입력해주세요.\nAndroid: https://play.google.com/store/apps/details?id=com.garam.whenwheremeet\niOS: https://apps.apple.com/kr/search?term=%EC%96%B4%EB%94%94%EC%84%9C%EB%B4%90"
         }
         event = UiEvent.Share(text)
     }
@@ -416,10 +611,10 @@ class MeetingAppState(
         event = null
     }
 
-    private fun openRoom(roomId: String) {
+    private fun openRoom(roomId: String, replaceCurrent: Boolean = false) {
         val participantId = repository.getCurrentParticipantId(roomId)
         if (participantId == null) {
-            route = AppRoute.JoinRoom(roomId)
+            navigateTo(AppRoute.JoinRoom(roomId), replaceCurrent = replaceCurrent)
             return
         }
         availabilityDraft = repository.getAvailabilities(roomId)
@@ -427,7 +622,27 @@ class MeetingAppState(
             .associate { it.date to it.status }
         selectedDate = null
         locationSearchResults = emptyList()
-        route = AppRoute.MeetingRoom(roomId)
+        navigateTo(AppRoute.MeetingRoom(roomId), replaceCurrent = replaceCurrent)
+    }
+
+    private fun navigateTo(nextRoute: AppRoute, replaceCurrent: Boolean = false) {
+        if (route == nextRoute) return
+        backStack = if (replaceCurrent) {
+            backStack
+        } else {
+            (backStack + route).takeLast(MAX_BACK_STACK_SIZE)
+        }
+        route = nextRoute
+    }
+
+    private fun navigateBack() {
+        val previousRoute = backStack.lastOrNull()
+        if (previousRoute == null) {
+            route = AppRoute.Home
+            return
+        }
+        backStack = backStack.dropLast(1)
+        route = previousRoute
     }
 
     private fun emitMessage(message: String) {
@@ -444,6 +659,53 @@ class MeetingAppState(
     }
 
     private fun generateId(prefix: String): String = "$prefix-${Clock.System.now().toEpochMilliseconds()}-${Random.nextInt(1000, 9999)}"
+
+    private fun meetingOverviews(): List<MeetingOverview> = repository.getRooms().map { room ->
+        MeetingOverview(
+            room = room,
+            participants = repository.getParticipants(room.id),
+            currentParticipantId = repository.getCurrentParticipantId(room.id),
+            availabilities = repository.getAvailabilities(room.id),
+            startLocations = repository.getStartLocations(room.id),
+            areaRecommendations = repository.getAreaRecommendations(room.id),
+            placeCandidates = repository.getPlaceCandidates(room.id),
+            placeVotes = repository.getPlaceVotes(room.id),
+        )
+    }
+
+    private companion object {
+        val MANUAL_REFRESH_COOLDOWN = 30.seconds
+        const val MAX_BACK_STACK_SIZE = 20
+    }
+}
+
+private fun com.garam.whenwheremeet.domain.usecase.HomeMeetingCard.toUiModel(): HomeMeetingCardUiModel =
+    HomeMeetingCardUiModel(
+        roomId = roomId,
+        title = title,
+        statusText = statusText,
+        dateText = dateText,
+        timeText = timeText,
+        placeText = placeText,
+        participantText = participantText,
+        responseText = responseText,
+        travelTimeText = travelTimeText,
+        actionType = actionType,
+        ctaText = ctaText,
+        isConfirmed = isConfirmed,
+    )
+
+private fun Throwable.meetingRepositoryErrorMessage(fallback: String): String {
+    val rawMessage = message.orEmpty()
+    return when {
+        rawMessage.contains("database (default) does not exist", ignoreCase = true) ||
+            rawMessage.contains("NOT_FOUND", ignoreCase = true) ->
+            "Firestore 데이터베이스를 찾지 못했어요. Firebase 프로젝트와 데이터베이스 ID 설정을 확인해주세요."
+        rawMessage.contains("PERMISSION_DENIED", ignoreCase = true) ->
+            "Firestore 접근 권한이 없어요. 로그인 상태와 Firestore 보안 규칙을 확인해주세요."
+        rawMessage.isNotBlank() -> rawMessage
+        else -> fallback
+    }
 }
 
 fun LocalDate.toKoreanDate(): String {
