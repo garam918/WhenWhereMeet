@@ -12,11 +12,13 @@ import kotlinx.datetime.LocalDate
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertFailsWith
+import kotlinx.coroutines.test.runTest
 import kotlin.time.Instant
 
 class LocalMeetingRepositoryTest {
     @Test
-    fun confirmingPlaceChangesRoomStatusAndKeepsDate() {
+    fun confirmingPlaceChangesRoomStatusAndKeepsDate() = runTest {
         val repository = LocalMeetingRepository(MemoryStorage())
         val now = Instant.parse("2026-06-01T00:00:00Z")
         val room = MeetingRoom(
@@ -54,11 +56,45 @@ class LocalMeetingRepositoryTest {
         assertEquals(place, updated.confirmedPlace)
     }
 
+    @Test
+    fun joinRoomRejectsWhenRoomIsFullAndLeaveRemovesCurrentParticipant() = runTest {
+        val repository = LocalMeetingRepository(MemoryStorage())
+        val now = Instant.parse("2026-06-01T00:00:00Z")
+        val room = MeetingRoom(
+            id = "ROOM12",
+            title = "테스트",
+            meetingType = MeetingType.MEAL,
+            dateRangeStart = LocalDate(2026, 6, 20),
+            dateRangeEnd = LocalDate(2026, 6, 21),
+            minParticipants = 1,
+            maxParticipants = 2,
+            hostParticipantId = "host",
+            status = MeetingStatus.COLLECTING_AVAILABILITY,
+            createdAt = now,
+            updatedAt = now,
+        )
+        repository.createRoom(room, Participant("host", room.id, "방장", true, false, now))
+        repository.joinRoom(Participant("guest1", room.id, "손님", false, false, now))
+
+        assertFailsWith<IllegalArgumentException> {
+            repository.joinRoom(Participant("guest2", room.id, "다른손님", false, false, now))
+        }
+
+        repository.leaveRoom(room.id, "guest1")
+
+        assertEquals(listOf("host"), repository.getParticipants(room.id).map { it.id })
+        assertEquals(null, repository.getCurrentParticipantId(room.id))
+    }
+
     private class MemoryStorage : KeyValueStorage {
         private val values = mutableMapOf<String, String>()
         override fun getString(key: String): String? = values[key]
         override fun putString(key: String, value: String) {
             values[key] = value
+        }
+
+        override fun remove(key: String) {
+            values.remove(key)
         }
     }
 }
