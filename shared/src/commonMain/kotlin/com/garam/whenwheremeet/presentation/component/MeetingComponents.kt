@@ -39,6 +39,7 @@ fun AvailabilityCalendar(
     summaries: List<DateAvailabilitySummary>,
     onDateClick: (LocalDate) -> Unit,
     modifier: Modifier = Modifier,
+    enabled: Boolean = true,
 ) {
     val summaryByDate = summaries.associateBy { it.date }
     val dates = generateSequence(startDate) { date ->
@@ -65,6 +66,7 @@ fun AvailabilityCalendar(
                             summary = summaryByDate[date],
                             onClick = { onDateClick(date) },
                             modifier = Modifier.weight(1f),
+                            enabled = enabled,
                         )
                     }
                 }
@@ -82,6 +84,7 @@ private fun DateCell(
     summary: DateAvailabilitySummary?,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    enabled: Boolean = true,
 ) {
     val background = when (status) {
         AvailabilityStatus.AVAILABLE -> WwmMint
@@ -100,7 +103,7 @@ private fun DateCell(
             .aspectRatio(1f)
             .background(background, RoundedCornerShape(10.dp))
             .border(1.dp, borderColor, RoundedCornerShape(10.dp))
-            .clickable(onClick = onClick)
+            .clickable(enabled = enabled, onClick = onClick)
             .padding(5.dp),
         verticalArrangement = Arrangement.SpaceBetween,
     ) {
