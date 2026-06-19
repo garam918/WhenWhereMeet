@@ -13,6 +13,7 @@ data class MeetingRoom(
     val dateRangeStart: LocalDate,
     val dateRangeEnd: LocalDate,
     val minParticipants: Int,
+    val maxParticipants: Int = minParticipants,
     val responseDeadline: LocalDate? = null,
     val hostParticipantId: String,
     val requiredParticipantIds: List<String> = emptyList(),
