@@ -1,6 +1,8 @@
 package com.garam.whenwheremeet.presentation.screen
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -11,7 +13,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -20,13 +21,15 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.garam.whenwheremeet.domain.model.MeetingType
 import com.garam.whenwheremeet.platform.currentLocalDate
 import com.garam.whenwheremeet.presentation.component.WwmBackground
-import com.garam.whenwheremeet.presentation.component.WwmBorder
 import com.garam.whenwheremeet.presentation.component.WwmCard
 import com.garam.whenwheremeet.presentation.component.WwmMuted
 import com.garam.whenwheremeet.presentation.component.WwmPrimaryButton
@@ -44,17 +47,15 @@ fun CreateMeetingRoomScreen(
     modifier: Modifier = Modifier,
 ) {
     val today = remember { currentLocalDate() }
-    val monthStart = remember { LocalDate(today.year, today.monthNumber, 1) }
-    val monthEnd = remember { LocalDate.fromEpochDays(monthStart.plus(DatePeriod(months = 1)).toEpochDays() - 1) }
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val doneKeyboardActions = KeyboardActions(onDone = { keyboardController?.hide() })
+    val doneKeyboardOptions = KeyboardOptions(imeAction = ImeAction.Done)
     var hostNickname by remember { mutableStateOf("") }
     var title by remember { mutableStateOf("") }
     var description by remember { mutableStateOf("") }
     var meetingType by remember { mutableStateOf(MeetingType.MEAL) }
     var monthText by remember { mutableStateOf("${today.year}-${today.monthNumber.toString().padStart(2, '0')}") }
-    var startText by remember { mutableStateOf(monthStart.toString()) }
-    var endText by remember { mutableStateOf(monthEnd.toString()) }
-    var minParticipantsText by remember { mutableStateOf("3") }
-    var deadlineText by remember { mutableStateOf("") }
+    var maxParticipantsText by remember { mutableStateOf("6") }
     var hostIsRequired by remember { mutableStateOf(false) }
 
     Column(modifier.fillMaxSize().background(WwmBackground)) {
@@ -64,9 +65,34 @@ fun CreateMeetingRoomScreen(
             verticalArrangement = Arrangement.spacedBy(24.dp),
         ) {
             FormCard("기본 정보", "어떤 모임을 계획하고 계신가요?") {
-                OutlinedTextField(hostNickname, { hostNickname = it }, label = { Text("방장 닉네임") }, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(title, { title = it }, label = { Text("약속 이름") }, placeholder = { Text("예: 주말 한강 피크닉") }, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(description, { description = it }, label = { Text("설명 또는 메모") }, minLines = 2, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(
+                    value = hostNickname,
+                    onValueChange = { hostNickname = it },
+                    label = { Text("방장 닉네임") },
+                    singleLine = true,
+                    keyboardOptions = doneKeyboardOptions,
+                    keyboardActions = doneKeyboardActions,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = title,
+                    onValueChange = { title = it },
+                    label = { Text("약속 이름") },
+                    placeholder = { Text("예: 주말 한강 피크닉") },
+                    singleLine = true,
+                    keyboardOptions = doneKeyboardOptions,
+                    keyboardActions = doneKeyboardActions,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = description,
+                    onValueChange = { description = it },
+                    label = { Text("설명 또는 메모") },
+                    minLines = 2,
+                    keyboardOptions = doneKeyboardOptions,
+                    keyboardActions = doneKeyboardActions,
+                    modifier = Modifier.fillMaxWidth(),
+                )
                 Text("모임 성격", color = WwmMuted, fontSize = 13.sp)
                 MeetingType.entries.chunked(3).forEach { types ->
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -80,35 +106,40 @@ fun CreateMeetingRoomScreen(
             FormCard("일정 및 기한", "참석자들이 투표할 기간을 설정해주세요.") {
                 Text("후보 기간 선택", color = WwmMuted, fontSize = 13.sp)
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf("이번 달", "다음 달", "직접 선택").forEachIndexed { index, label ->
+                    listOf("이번 달" to 0, "다음 달" to 1).forEach { (label, monthOffset) ->
                         FilterChip(
-                            selected = index == 0,
+                            selected = monthText == today.plus(DatePeriod(months = monthOffset)).yearMonthText(),
                             onClick = {
-                                if (index == 0) {
-                                    startText = monthStart.toString()
-                                    endText = monthEnd.toString()
-                                }
+                                monthText = today.plus(DatePeriod(months = monthOffset)).yearMonthText()
                             },
                             label = { Text(label) },
                             modifier = Modifier.weight(1f),
                         )
                     }
                 }
-                OutlinedTextField(monthText, { monthText = it }, label = { Text("특정 월 (YYYY-MM)") }, modifier = Modifier.fillMaxWidth())
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(startText, { startText = it }, label = { Text("시작일") }, modifier = Modifier.weight(1f))
-                    OutlinedTextField(endText, { endText = it }, label = { Text("종료일") }, modifier = Modifier.weight(1f))
-                }
-                HorizontalDivider(color = WwmBorder)
-                OutlinedTextField(deadlineText, { deadlineText = it }, label = { Text("응답 마감일 (선택)") }, modifier = Modifier.fillMaxWidth())
-                Text("마감일이 지나면 투표가 자동으로 종료됩니다.", color = WwmMuted, fontSize = 12.sp)
+                OutlinedTextField(
+                    value = monthText,
+                    onValueChange = { monthText = it },
+                    label = { Text("후보 월 (YYYY-MM)") },
+                    singleLine = true,
+                    keyboardOptions = doneKeyboardOptions,
+                    keyboardActions = doneKeyboardActions,
+                    modifier = Modifier.fillMaxWidth(),
+                )
             }
 
             FormCard("인원 및 옵션") {
                 OutlinedTextField(
-                    minParticipantsText,
-                    { minParticipantsText = it.filter(Char::isDigit) },
-                    label = { Text("최소 참석 인원") },
+                    value = maxParticipantsText,
+                    onValueChange = { maxParticipantsText = it.filter(Char::isDigit) },
+                    label = { Text("최대 인원") },
+                    supportingText = { Text("정원이 차면 새 참여자는 입장할 수 없어요.") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Number,
+                        imeAction = ImeAction.Done,
+                    ),
+                    keyboardActions = doneKeyboardActions,
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -123,9 +154,7 @@ fun CreateMeetingRoomScreen(
         WwmPrimaryButton(
             text = "⊕ 약속방 만들기",
             onClick = {
-                val start = runCatching { LocalDate.parse(startText) }.getOrNull()
-                val end = runCatching { LocalDate.parse(endText) }.getOrNull()
-                if (start != null && end != null) {
+                monthText.toMonthDateRange()?.let { (start, end) ->
                     onCreate(
                         CreateRoomInput(
                             hostNickname = hostNickname,
@@ -134,8 +163,9 @@ fun CreateMeetingRoomScreen(
                             meetingType = meetingType,
                             startDate = start,
                             endDate = end,
-                            minParticipants = minParticipantsText.toIntOrNull() ?: 1,
-                            responseDeadline = deadlineText.takeIf(String::isNotBlank)?.let { runCatching { LocalDate.parse(it) }.getOrNull() },
+                            minParticipants = 1,
+                            maxParticipants = maxParticipantsText.toIntOrNull() ?: 2,
+                            responseDeadline = null,
                             hostIsRequired = hostIsRequired,
                         ),
                     )
@@ -144,6 +174,19 @@ fun CreateMeetingRoomScreen(
             modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
         )
     }
+}
+
+private fun LocalDate.yearMonthText(): String = "$year-${monthNumber.toString().padStart(2, '0')}"
+
+private fun String.toMonthDateRange(): Pair<LocalDate, LocalDate>? {
+    val parts = split("-")
+    if (parts.size != 2) return null
+    val year = parts[0].toIntOrNull() ?: return null
+    val month = parts[1].toIntOrNull() ?: return null
+    if (month !in 1..12) return null
+    val start = LocalDate(year, month, 1)
+    val end = LocalDate.fromEpochDays(start.plus(DatePeriod(months = 1)).toEpochDays() - 1)
+    return start to end
 }
 
 @Composable
