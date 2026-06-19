@@ -1,9 +1,7 @@
 package com.garam.whenwheremeet.data.provider
 
-import com.garam.whenwheremeet.domain.model.AreaType
 import com.garam.whenwheremeet.domain.model.GeoPoint
 import com.garam.whenwheremeet.domain.model.LocationSearchResult
-import com.garam.whenwheremeet.domain.model.MeetingAreaCandidate
 import com.garam.whenwheremeet.domain.model.TransportMode
 import com.garam.whenwheremeet.domain.model.TravelTimeResult
 import com.garam.whenwheremeet.domain.provider.LocationSearchProvider
@@ -17,48 +15,24 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 object SampleLocationData {
-    val searchLocations = listOf(
-        location("gangnam", "강남역", 37.4979, 127.0276),
-        location("hongdae", "홍대입구역", 37.5572, 126.9254),
-        location("jamsil", "잠실역", 37.5133, 127.1001),
-        location("sadang", "사당역", 37.4765, 126.9816),
-        location("seoul", "서울역", 37.5547, 126.9706),
-        location("yongsan", "용산역", 37.5298, 126.9648),
-        location("sindorim", "신도림역", 37.5088, 126.8913),
-        location("bupyeong", "부평역", 37.4895, 126.7245),
-        location("pangyo", "판교역", 37.3948, 127.1112),
-        location("yeouido", "여의도역", 37.5216, 126.9242),
-    )
+    val searchLocations = MetropolitanTransitData.stations.map {
+        location(it.id, it.name, it.latitude, it.longitude, "${it.region} · ${it.lines.joinToString("/")}")
+    }
 
-    val areaCandidates = listOf(
-        candidate("gangnam", "강남역", 37.4979, 127.0276, AreaType.HOT_PLACE, "식사", "카페", "술자리", "스터디"),
-        candidate("sadang", "사당역", 37.4765, 126.9816, AreaType.STATION, "식사", "카페", "술자리"),
-        candidate("sindorim", "신도림역", 37.5088, 126.8913, AreaType.STATION, "식사", "카페"),
-        candidate("seoul", "서울역", 37.5547, 126.9706, AreaType.BUSINESS_DISTRICT, "식사", "카페", "스터디"),
-        candidate("yongsan", "용산역", 37.5298, 126.9648, AreaType.STATION, "식사", "카페", "술자리"),
-        candidate("hongdae", "홍대입구역", 37.5572, 126.9254, AreaType.HOT_PLACE, "식사", "카페", "술자리"),
-        candidate("yeouido", "여의도역", 37.5216, 126.9242, AreaType.BUSINESS_DISTRICT, "식사", "카페", "스터디", "운동"),
-        candidate("jamsil", "잠실역", 37.5133, 127.1001, AreaType.HOT_PLACE, "식사", "카페", "운동"),
-        candidate("konkuk", "건대입구역", 37.5404, 127.0693, AreaType.HOT_PLACE, "식사", "카페", "술자리"),
-        candidate("hapjeong", "합정역", 37.5495, 126.9138, AreaType.HOT_PLACE, "식사", "카페", "술자리"),
-        candidate("pangyo", "판교역", 37.3948, 127.1112, AreaType.BUSINESS_DISTRICT, "식사", "카페", "스터디"),
-    )
+    val areaCandidates = MetropolitanTransitData.areaCandidates
 
-    private fun location(id: String, label: String, latitude: Double, longitude: Double) = LocationSearchResult(
-        id = id,
-        label = label,
-        address = "${label.removeSuffix("역")} 인근",
-        point = GeoPoint(latitude, longitude),
-    )
-
-    private fun candidate(
+    private fun location(
         id: String,
-        name: String,
+        label: String,
         latitude: Double,
         longitude: Double,
-        areaType: AreaType,
-        vararg tags: String,
-    ) = MeetingAreaCandidate(id, name, name, latitude, longitude, areaType, tags.toList())
+        address: String,
+    ) = LocationSearchResult(
+        id = id,
+        label = label,
+        address = address,
+        point = GeoPoint(latitude, longitude),
+    )
 }
 
 class FakeLocationSearchProvider : LocationSearchProvider {
