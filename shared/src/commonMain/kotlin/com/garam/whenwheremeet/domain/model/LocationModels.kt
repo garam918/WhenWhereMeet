@@ -68,6 +68,26 @@ data class MeetingAreaCandidate(
 }
 
 @Serializable
+data class TransitStation(
+    val id: String,
+    val name: String,
+    val latitude: Double,
+    val longitude: Double,
+    val lines: List<String>,
+    val region: String,
+) {
+    val point: GeoPoint get() = GeoPoint(latitude, longitude)
+}
+
+@Serializable
+data class TransitDurationRecord(
+    val originStationId: String,
+    val destinationAreaId: String,
+    val durationMinutes: Int,
+    val transferCount: Int? = null,
+)
+
+@Serializable
 enum class AreaType {
     STATION,
     HOT_PLACE,
