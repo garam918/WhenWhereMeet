@@ -10,5 +10,9 @@ actual fun platformKeyValueStorage(): KeyValueStorage {
         override fun putString(key: String, value: String) {
             defaults.setObject(value, forKey = key)
         }
+
+        override fun remove(key: String) {
+            defaults.removeObjectForKey(key)
+        }
     }
 }
