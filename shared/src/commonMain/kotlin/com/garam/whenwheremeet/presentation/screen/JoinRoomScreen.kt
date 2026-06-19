@@ -1,6 +1,8 @@
 package com.garam.whenwheremeet.presentation.screen
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,7 +19,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -39,6 +43,9 @@ fun JoinRoomScreen(
 ) {
     var roomCode by remember(initialRoomCode) { mutableStateOf(initialRoomCode) }
     var nickname by remember { mutableStateOf("") }
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val doneKeyboardActions = KeyboardActions(onDone = { keyboardController?.hide() })
+    val doneKeyboardOptions = KeyboardOptions(imeAction = ImeAction.Done)
 
     Column(modifier.fillMaxSize().background(WwmBackground)) {
         WwmTopBar(title = "어디서봐", leadingText = "‹", onLeadingClick = onBack)
@@ -64,6 +71,9 @@ fun JoinRoomScreen(
                         onValueChange = { roomCode = it.uppercase() },
                         label = { Text("방 코드") },
                         placeholder = { Text("초대 코드 입력") },
+                        singleLine = true,
+                        keyboardOptions = doneKeyboardOptions,
+                        keyboardActions = doneKeyboardActions,
                         modifier = Modifier.fillMaxWidth(),
                     )
                     OutlinedTextField(
@@ -72,6 +82,9 @@ fun JoinRoomScreen(
                         label = { Text("어떤 이름으로 참여할까요?") },
                         placeholder = { Text("닉네임 입력") },
                         supportingText = { Text("로그인 없이 닉네임만 입력하면 참여할 수 있어요.") },
+                        singleLine = true,
+                        keyboardOptions = doneKeyboardOptions,
+                        keyboardActions = doneKeyboardActions,
                         modifier = Modifier.fillMaxWidth(),
                     )
                     WwmPrimaryButton("참여하고 가능한 날짜 선택하기 →", { onJoin(roomCode, nickname) })
