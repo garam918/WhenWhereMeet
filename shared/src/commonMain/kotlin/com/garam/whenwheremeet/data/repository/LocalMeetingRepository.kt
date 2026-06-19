@@ -42,6 +42,40 @@ class LocalMeetingRepository(
 
     override fun getCurrentParticipantId(roomId: String): String? = snapshot.currentParticipantIds[roomId]
 
+    fun importRoom(room: MeetingRoom, participants: List<Participant>, currentParticipantId: String?) {
+        snapshot = snapshot.copy(
+            rooms = snapshot.rooms.filterNot { it.id == room.id } + room,
+            participants = snapshot.participants.filterNot { it.roomId == room.id } + participants,
+            currentParticipantIds = if (currentParticipantId == null) {
+                snapshot.currentParticipantIds - room.id
+            } else {
+                snapshot.currentParticipantIds + (room.id to currentParticipantId)
+            },
+        )
+        persist()
+    }
+
+    fun importRoomMetadata(room: MeetingRoom) {
+        snapshot = snapshot.copy(
+            rooms = snapshot.rooms.filterNot { it.id == room.id } + room,
+        )
+        persist()
+    }
+
+    fun importParticipants(roomId: String, participants: List<Participant>) {
+        snapshot = snapshot.copy(
+            participants = snapshot.participants.filterNot { it.roomId == roomId } + participants,
+        )
+        persist()
+    }
+
+    fun importAvailabilities(roomId: String, availabilities: List<Availability>) {
+        snapshot = snapshot.copy(
+            availabilities = snapshot.availabilities.filterNot { it.roomId == roomId } + availabilities,
+        )
+        persist()
+    }
+
     override fun getStartLocations(roomId: String): List<UserStartLocation> =
         snapshot.startLocations.filter { it.roomId == roomId }
 
@@ -57,7 +91,7 @@ class LocalMeetingRepository(
     override fun getPlaceVotes(roomId: String): List<PlaceVote> =
         snapshot.placeVotes.filter { it.roomId == roomId }
 
-    override fun createRoom(room: MeetingRoom, host: Participant) {
+    override suspend fun createRoom(room: MeetingRoom, host: Participant) {
         require(snapshot.rooms.none { it.id.equals(room.id, ignoreCase = true) }) { "이미 존재하는 방 코드입니다." }
         snapshot = snapshot.copy(
             rooms = snapshot.rooms + room,
@@ -67,7 +101,10 @@ class LocalMeetingRepository(
         persist()
     }
 
-    override fun joinRoom(participant: Participant) {
+    override suspend fun joinRoom(participant: Participant) {
+        val room = requireNotNull(getRoom(participant.roomId)) { "방 코드를 확인해주세요." }
+        val currentCount = getParticipants(participant.roomId).size
+        require(currentCount < room.maxParticipants) { "정원이 가득 차서 참여할 수 없습니다." }
         val duplicate = snapshot.participants.any {
             it.roomId == participant.roomId && it.nickname.equals(participant.nickname, ignoreCase = true)
         }
@@ -80,7 +117,38 @@ class LocalMeetingRepository(
         persist()
     }
 
-    override fun saveAvailabilities(
+    override suspend fun leaveRoom(roomId: String, participantId: String) {
+        val room = requireNotNull(getRoom(roomId)) { "방 정보를 찾을 수 없습니다." }
+        require(room.hostParticipantId != participantId) { "방장은 방을 나갈 수 없습니다." }
+        snapshot = snapshot.copy(
+            participants = snapshot.participants.filterNot { it.roomId == roomId && it.id == participantId },
+            availabilities = snapshot.availabilities.filterNot { it.roomId == roomId && it.participantId == participantId },
+            startLocations = snapshot.startLocations.filterNot { it.roomId == roomId && it.participantId == participantId },
+            travelPreferences = snapshot.travelPreferences.filterNot { it.roomId == roomId && it.participantId == participantId },
+            placeVotes = snapshot.placeVotes.filterNot { it.roomId == roomId && it.participantId == participantId },
+            currentParticipantIds = snapshot.currentParticipantIds - roomId,
+        )
+        touchRoom(roomId)
+        persist()
+    }
+
+    override suspend fun deleteRoom(roomId: String) {
+        requireNotNull(getRoom(roomId)) { "방 정보를 찾을 수 없습니다." }
+        snapshot = snapshot.copy(
+            rooms = snapshot.rooms.filterNot { it.id == roomId },
+            participants = snapshot.participants.filterNot { it.roomId == roomId },
+            availabilities = snapshot.availabilities.filterNot { it.roomId == roomId },
+            currentParticipantIds = snapshot.currentParticipantIds - roomId,
+            startLocations = snapshot.startLocations.filterNot { it.roomId == roomId },
+            travelPreferences = snapshot.travelPreferences.filterNot { it.roomId == roomId },
+            areaRecommendations = snapshot.areaRecommendations - roomId,
+            placeCandidates = snapshot.placeCandidates - roomId,
+            placeVotes = snapshot.placeVotes.filterNot { it.roomId == roomId },
+        )
+        persist()
+    }
+
+    override suspend fun saveAvailabilities(
         roomId: String,
         participantId: String,
         values: Map<LocalDate, AvailabilityStatus>,
@@ -97,7 +165,7 @@ class LocalMeetingRepository(
         persist()
     }
 
-    override fun confirmDate(roomId: String, date: LocalDate) {
+    override suspend fun confirmDate(roomId: String, date: LocalDate) {
         val now = Clock.System.now()
         snapshot = snapshot.copy(rooms = snapshot.rooms.map { room ->
             if (room.id == roomId) room.copy(
