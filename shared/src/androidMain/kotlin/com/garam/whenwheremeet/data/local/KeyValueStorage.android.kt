@@ -17,5 +17,9 @@ actual fun platformKeyValueStorage(): KeyValueStorage {
         override fun putString(key: String, value: String) {
             preferences.edit().putString(key, value).apply()
         }
+
+        override fun remove(key: String) {
+            preferences.edit().remove(key).apply()
+        }
     }
 }
