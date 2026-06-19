@@ -12,14 +12,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -76,6 +74,8 @@ fun MeetingRoomScreen(
     onVotePlace: (String, PlaceVoteType) -> Unit,
     onConfirmPlace: (PlaceCandidate) -> Unit,
     onOpenMap: (PlaceCandidate) -> Unit,
+    onLeaveRoom: () -> Unit,
+    onDeleteRoom: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val room = state.room
@@ -106,7 +106,7 @@ fun MeetingRoomScreen(
                     },
                 )
             }
-            Text("${room.meetingType.label} · 참여자 ${state.participants.size}명 · 방 코드 ${room.id}", color = WwmMuted)
+            Text("${room.meetingType.label} · 참여자 ${state.participants.size}/${room.maxParticipants}명 · 방 코드 ${room.id}", color = WwmMuted)
             Text("후보 기간 ${room.dateRangeStart} ~ ${room.dateRangeEnd}", color = WwmMuted)
             room.responseDeadline?.let { Text("응답 마감 $it", color = WwmMuted) }
 
@@ -142,7 +142,7 @@ fun MeetingRoomScreen(
                     onOpenMap = onOpenMap,
                     onShare = onShare,
                 )
-                MeetingRoomTab.PARTICIPANTS -> ParticipantsTab(state)
+                MeetingRoomTab.PARTICIPANTS -> ParticipantsTab(state, onLeaveRoom, onDeleteRoom)
             }
             Spacer(Modifier.height(20.dp))
         }
@@ -158,9 +158,22 @@ private fun DateTab(
     onConfirm: (LocalDate) -> Unit,
 ) {
     val room = state.room
+    var availabilityEditEnabled by remember(room.id, room.confirmedDate) {
+        mutableStateOf(room.confirmedDate == null)
+    }
+    val canEditAvailability = room.confirmedDate == null || availabilityEditEnabled
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         SectionTitle("내 가능한 날짜")
-        Text("날짜를 누르면 미선택 → 가능 → 애매 → 불가능 순서로 바뀝니다.", style = MaterialTheme.typography.bodySmall)
+        if (room.confirmedDate == null) {
+            Text("날짜를 누르면 미선택 → 가능 → 애매 → 불가능 순서로 바뀝니다.", style = MaterialTheme.typography.bodySmall)
+        } else {
+            Text("약속 날짜가 확정되어 날짜 선택이 잠겨 있어요.", style = MaterialTheme.typography.bodySmall)
+            if (!availabilityEditEnabled) {
+                WwmOutlineButton("날짜 변경하기", onClick = { availabilityEditEnabled = true })
+            } else {
+                Text("날짜 변경 중입니다. 수정 후 응답을 저장해주세요.", color = WwmIndigo, style = MaterialTheme.typography.bodySmall)
+            }
+        }
         AvailabilityLegend()
         AvailabilityCalendar(
             startDate = room.dateRangeStart,
@@ -168,12 +181,18 @@ private fun DateTab(
             selectedValues = state.selectedAvailability,
             summaries = state.summaries,
             onDateClick = { onCycleDate(it); onSelectDate(it) },
+            enabled = canEditAvailability,
         )
-        WwmPrimaryButton("응답 저장", onSave)
+        if (canEditAvailability) {
+            WwmPrimaryButton("응답 저장", onSave)
+        }
         SectionTitle("추천 날짜 TOP 3")
         state.recommendations.forEach { recommendation ->
             val summary = recommendation.summary
-            WwmCard(modifier = Modifier.fillMaxWidth(), onClick = { onSelectDate(summary.date) }) {
+            WwmCard(
+                modifier = Modifier.fillMaxWidth(),
+                onClick = { if (canEditAvailability) onSelectDate(summary.date) },
+            ) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     if (recommendation.rank == 1) StatusPill("☆ 1순위")
                     Text("${summary.date.toKoreanDate()}", color = WwmText, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
@@ -192,8 +211,11 @@ private fun DateTab(
                     Text("불가능: ${summary.unavailableParticipants.namesOrNone()}")
                     Text("미응답: ${summary.unansweredParticipants.namesOrNone()}")
                     Text(if (summary.allRequiredAvailable) "필수 참석자 가능" else "필수 참석자 확인 필요")
-                    if (state.currentParticipant.isHost && room.confirmedDate == null) {
-                        WwmPrimaryButton("이 날짜로 확정하기", { onConfirm(summary.date) })
+                    if (state.currentParticipant.isHost && canEditAvailability) {
+                        WwmPrimaryButton(
+                            if (room.confirmedDate == null) "이 날짜로 확정하기" else "이 날짜로 변경하기",
+                            { onConfirm(summary.date) },
+                        )
                     }
                 }
             }
@@ -202,7 +224,9 @@ private fun DateTab(
 }
 
 @Composable
-private fun ParticipantsTab(state: MeetingRoomUiState) {
+private fun ParticipantsTab(state: MeetingRoomUiState, onLeaveRoom: () -> Unit, onDeleteRoom: () -> Unit) {
+    var showLeaveConfirm by remember { mutableStateOf(false) }
+    var showDeleteConfirm by remember { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         SectionTitle("참여자 ${state.participants.size}명")
         WwmCard(Modifier.fillMaxWidth()) {
@@ -219,7 +243,61 @@ private fun ParticipantsTab(state: MeetingRoomUiState) {
                 }
             }
         }
+        if (state.currentParticipant.isHost) {
+            WwmOutlineButton("약속 삭제", onClick = { showDeleteConfirm = true })
+        } else {
+            WwmOutlineButton("약속방 나가기", onClick = { showLeaveConfirm = true })
+        }
     }
+    if (showLeaveConfirm) {
+        ConfirmDangerDialog(
+            title = "약속방에서 나갈까요?",
+            text = "내 응답과 투표 정보가 이 기기에서 제거됩니다.",
+            confirmText = "나가기",
+            onDismiss = { showLeaveConfirm = false },
+            onConfirm = {
+                showLeaveConfirm = false
+                onLeaveRoom()
+            },
+        )
+    }
+    if (showDeleteConfirm) {
+        ConfirmDangerDialog(
+            title = "약속을 삭제할까요?",
+            text = "참여자들이 더 이상 이 약속방에 접근할 수 없습니다.",
+            confirmText = "삭제",
+            onDismiss = { showDeleteConfirm = false },
+            onConfirm = {
+                showDeleteConfirm = false
+                onDeleteRoom()
+            },
+        )
+    }
+}
+
+@Composable
+private fun ConfirmDangerDialog(
+    title: String,
+    text: String,
+    confirmText: String,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = { Text(text) },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text(confirmText, color = MaterialTheme.colorScheme.error)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("취소")
+            }
+        },
+    )
 }
 
 private fun List<com.garam.whenwheremeet.domain.model.Participant>.namesOrNone(): String =
