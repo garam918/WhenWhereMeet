@@ -33,6 +33,7 @@ import com.garam.whenwheremeet.domain.usecase.CalendarFilter
 import com.garam.whenwheremeet.domain.usecase.CalendarMonth
 import com.garam.whenwheremeet.presentation.component.MainBottomBar
 import com.garam.whenwheremeet.presentation.component.MainTab
+import com.garam.whenwheremeet.presentation.component.RefreshActionIcon
 import com.garam.whenwheremeet.presentation.component.StatusPill
 import com.garam.whenwheremeet.presentation.component.WwmBackground
 import com.garam.whenwheremeet.presentation.component.WwmBorder
@@ -78,7 +79,12 @@ fun CalendarScreen(
 ) {
     Box(modifier.fillMaxSize().background(WwmBackground)) {
         Column(Modifier.fillMaxSize()) {
-            WwmTopBar(title = "캘린더", trailingText = "새로고침", onTrailingClick = onRefresh)
+            WwmTopBar(
+                title = "캘린더",
+                trailingIconContentDescription = "새로고침",
+                trailingIcon = { RefreshActionIcon() },
+                onTrailingClick = onRefresh,
+            )
             LazyColumn(
                 modifier = Modifier.weight(1f),
                 contentPadding = PaddingValues(start = 20.dp, top = 18.dp, end = 20.dp, bottom = 108.dp),
