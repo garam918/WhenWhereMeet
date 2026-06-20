@@ -1,6 +1,7 @@
 package com.garam.whenwheremeet.presentation.component
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -11,6 +12,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
@@ -18,6 +21,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ColorScheme
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -27,6 +31,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -69,10 +77,12 @@ fun WwmTheme(content: @Composable () -> Unit) {
 
 @Composable
 fun WwmTopBar(
-    title: String = "어디서봐",
-    leadingText: String = "☰",
+    title: String = "언제어디",
+    leadingText: String? = null,
     onLeadingClick: (() -> Unit)? = null,
     trailingText: String? = null,
+    trailingIconContentDescription: String? = null,
+    trailingIcon: (@Composable () -> Unit)? = null,
     onTrailingClick: (() -> Unit)? = null,
 ) {
     Row(
@@ -80,24 +90,67 @@ fun WwmTopBar(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            leadingText,
-            modifier = Modifier.clickable(enabled = onLeadingClick != null) { onLeadingClick?.invoke() }.padding(8.dp),
-            color = if (onLeadingClick == null) WwmIndigo else WwmMuted,
-            fontSize = 20.sp,
-        )
-        Text(title, color = WwmIndigo, fontSize = 23.sp, fontWeight = FontWeight.Medium)
-        if (trailingText == null) {
-            Box(Modifier.height(32.dp).padding(horizontal = 16.dp))
-        } else {
-            Box(
-                Modifier.background(Color.White, CircleShape)
-                    .border(2.dp, WwmBorder, CircleShape)
-                    .clickable(enabled = onTrailingClick != null) { onTrailingClick?.invoke() }
-                    .padding(horizontal = 9.dp, vertical = 5.dp),
-                contentAlignment = Alignment.Center,
-            ) { Text(trailingText, color = WwmIndigo, fontWeight = FontWeight.Bold) }
+        Box(Modifier.width(48.dp), contentAlignment = Alignment.CenterStart) {
+            leadingText?.let {
+                Text(
+                    it,
+                    modifier = Modifier.clickable(enabled = onLeadingClick != null) { onLeadingClick?.invoke() }.padding(8.dp),
+                    color = if (onLeadingClick == null) WwmIndigo else WwmMuted,
+                    fontSize = 20.sp,
+                )
+            }
         }
+        Text(title, color = WwmIndigo, fontSize = 23.sp, fontWeight = FontWeight.Medium)
+        Box(Modifier.width(48.dp), contentAlignment = Alignment.CenterEnd) {
+            when {
+                trailingIcon != null -> IconButton(
+                    onClick = { onTrailingClick?.invoke() },
+                    enabled = onTrailingClick != null,
+                    modifier = Modifier.size(40.dp)
+                        .background(Color.White, CircleShape)
+                        .border(2.dp, WwmBorder, CircleShape)
+                        .semantics {
+                            trailingIconContentDescription?.let { contentDescription = it }
+                        },
+                ) { trailingIcon() }
+
+                trailingText != null -> Box(
+                    Modifier.background(Color.White, CircleShape)
+                        .border(2.dp, WwmBorder, CircleShape)
+                        .clickable(enabled = onTrailingClick != null) { onTrailingClick?.invoke() }
+                        .padding(horizontal = 9.dp, vertical = 5.dp),
+                    contentAlignment = Alignment.Center,
+                ) { Text(trailingText, color = WwmIndigo, fontWeight = FontWeight.Bold) }
+            }
+        }
+    }
+}
+
+@Composable
+fun RefreshActionIcon(modifier: Modifier = Modifier) {
+    Canvas(modifier.size(20.dp)) {
+        val strokeWidth = 2.2.dp.toPx()
+        drawArc(
+            color = WwmIndigo,
+            startAngle = 35f,
+            sweepAngle = 285f,
+            useCenter = false,
+            style = Stroke(width = strokeWidth, cap = StrokeCap.Round),
+        )
+        drawLine(
+            color = WwmIndigo,
+            start = androidx.compose.ui.geometry.Offset(size.width * 0.83f, size.height * 0.18f),
+            end = androidx.compose.ui.geometry.Offset(size.width * 0.83f, size.height * 0.42f),
+            strokeWidth = strokeWidth,
+            cap = StrokeCap.Round,
+        )
+        drawLine(
+            color = WwmIndigo,
+            start = androidx.compose.ui.geometry.Offset(size.width * 0.83f, size.height * 0.18f),
+            end = androidx.compose.ui.geometry.Offset(size.width * 0.62f, size.height * 0.2f),
+            strokeWidth = strokeWidth,
+            cap = StrokeCap.Round,
+        )
     }
 }
 
