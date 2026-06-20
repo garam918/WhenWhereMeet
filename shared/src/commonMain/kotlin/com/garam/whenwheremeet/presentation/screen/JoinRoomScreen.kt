@@ -48,7 +48,7 @@ fun JoinRoomScreen(
     val doneKeyboardOptions = KeyboardOptions(imeAction = ImeAction.Done)
 
     Column(modifier.fillMaxSize().background(WwmBackground)) {
-        WwmTopBar(title = "어디서봐", leadingText = "‹", onLeadingClick = onBack)
+        WwmTopBar(title = "언제어디", leadingText = "‹", onLeadingClick = onBack)
         Box(Modifier.fillMaxSize().padding(16.dp), contentAlignment = Alignment.Center) {
             WwmCard(Modifier.fillMaxWidth()) {
                 Column(
