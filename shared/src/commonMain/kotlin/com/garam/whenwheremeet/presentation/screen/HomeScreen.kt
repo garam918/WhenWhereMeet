@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.garam.whenwheremeet.presentation.component.MainBottomBar
 import com.garam.whenwheremeet.presentation.component.MainTab
+import com.garam.whenwheremeet.presentation.component.RefreshActionIcon
 import com.garam.whenwheremeet.presentation.component.StatusPill
 import com.garam.whenwheremeet.presentation.component.WwmBackground
 import com.garam.whenwheremeet.presentation.component.WwmBorder
@@ -57,7 +58,11 @@ fun HomeScreen(
 ) {
     Box(modifier.fillMaxSize().background(WwmBackground)) {
         Column(Modifier.fillMaxSize()) {
-            WwmTopBar(trailingText = "새로고침", onTrailingClick = onRefresh)
+            WwmTopBar(
+                trailingIconContentDescription = "새로고침",
+                trailingIcon = { RefreshActionIcon() },
+                onTrailingClick = onRefresh,
+            )
             LazyColumn(
                 modifier = Modifier.weight(1f),
                 contentPadding = PaddingValues(start = 20.dp, top = 20.dp, end = 20.dp, bottom = 108.dp),
@@ -111,7 +116,7 @@ private fun FloatingCreateButton(onClick: () -> Unit, modifier: Modifier = Modif
 @Composable
 private fun HomeHeader(onCreateRoom: () -> Unit, onJoinRoom: () -> Unit) {
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text("어디서봐", color = WwmIndigo, fontSize = 28.sp, fontWeight = FontWeight.Bold)
+        Text("언제어디", color = WwmIndigo, fontSize = 28.sp, fontWeight = FontWeight.Bold)
         Text("날짜부터 장소까지, 약속을 쉽게 정해요", color = WwmMuted, fontSize = 15.sp)
         Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             WwmOutlineButton("새 약속 만들기", onClick = onCreateRoom, modifier = Modifier.weight(1f))
