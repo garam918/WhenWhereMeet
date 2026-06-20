@@ -82,7 +82,7 @@ fun MeetingRoomScreen(
     var selectedTab by remember { mutableStateOf(MeetingRoomTab.DATE) }
     Column(modifier.fillMaxSize().background(WwmBackground)) {
         WwmTopBar(
-            title = "어디서봐",
+            title = "언제어디",
             leadingText = "‹",
             onLeadingClick = onBack,
             trailingText = "↗",
