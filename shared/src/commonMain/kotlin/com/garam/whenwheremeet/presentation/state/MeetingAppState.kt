@@ -3,6 +3,7 @@ package com.garam.whenwheremeet.presentation.state
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.garam.whenwheremeet.buildRoomJoinLink
 import com.garam.whenwheremeet.domain.model.AvailabilityStatus
 import com.garam.whenwheremeet.domain.model.AreaRecommendation
 import com.garam.whenwheremeet.domain.model.DateAvailabilitySummary
@@ -273,6 +274,10 @@ class MeetingAppState(
         }
         if (input.endDate < input.startDate) {
             emitMessage("종료일은 시작일보다 빠를 수 없습니다.")
+            return
+        }
+        if (input.startDate < currentLocalDate()) {
+            emitMessage("시작일은 오늘 또는 이후 날짜로 선택해주세요.")
             return
         }
         if (input.maxParticipants < 2) {
@@ -597,12 +602,10 @@ class MeetingAppState(
     fun requestShare(roomId: String) {
         val room = repository.getRoom(roomId) ?: return
         val participantCount = repository.getParticipants(roomId).size
-        val text = if (room.confirmedPlace != null && room.confirmedDate != null) {
+        val text = if (room.confirmedDate != null) {
             buildConfirmedShareText(room, participantCount)
-        } else if (room.confirmedDate != null) {
-            "[약속 확정]\n약속명: ${room.title}\n날짜: ${room.confirmedDate.toKoreanDate()}\n참여자: ${participantCount}명\n\n자세히 보기:\nwhenwheremeet://room/${room.id}"
         } else {
-            "[약속 조율 요청]\n약속명: ${room.title}\n가능한 날짜를 선택해주세요.\n\n참여하기:\nwhenwheremeet://room/${room.id}\n방 코드: ${room.id}\n\n앱이 없다면 설치 후 방 코드를 입력해주세요.\nAndroid: https://play.google.com/store/apps/details?id=com.garam.whenwheremeet\niOS: https://apps.apple.com/kr/search?term=%EC%96%B4%EB%94%94%EC%84%9C%EB%B4%90"
+            "[약속 조율 요청]\n약속명: ${room.title}\n가능한 날짜를 선택해주세요.\n\n참여하기:\n${buildRoomJoinLink(room.id)}\n방 코드: ${room.id}\n\n앱이 없다면 설치 후 방 코드를 입력해주세요."
         }
         event = UiEvent.Share(text)
     }
