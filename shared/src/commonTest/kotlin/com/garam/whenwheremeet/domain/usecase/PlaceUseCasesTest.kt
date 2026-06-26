@@ -77,6 +77,16 @@ class PlaceUseCasesTest {
         assertTrue(text.contains("참여자: 5명"))
     }
 
+    @Test
+    fun buildsConfirmedMeetingShareTextWithoutPlace() {
+        val room = room().copy(status = MeetingStatus.DATE_CONFIRMED, confirmedPlace = null)
+        val text = BuildConfirmedMeetingShareTextUseCase()(room, 3)
+
+        assertTrue(text.contains("날짜: 2026년 6월 21일 일요일"))
+        assertTrue(text.contains("장소: 미정"))
+        assertTrue(text.contains("참여자: 3명"))
+    }
+
     private fun place(
         id: String,
         category: PlaceCategory = PlaceCategory.RESTAURANT,
