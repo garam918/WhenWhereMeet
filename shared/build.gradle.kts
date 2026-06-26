@@ -1,3 +1,4 @@
+import org.jetbrains.kotlin.gradle.ExperimentalWasmDsl
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -6,14 +7,9 @@ plugins {
     alias(libs.plugins.composeMultiplatform)
     alias(libs.plugins.composeCompiler)
     alias(libs.plugins.kotlinSerialization)
-    alias(libs.plugins.ksp)
-    alias(libs.plugins.androidxRoom)
 }
 
-room {
-    schemaDirectory("$projectDir/schemas")
-}
-
+@OptIn(ExperimentalWasmDsl::class)
 kotlin {
     listOf(
         iosArm64(),
@@ -40,42 +36,91 @@ kotlin {
            isIncludeAndroidResources = true
        }
     }
+
+    js {
+        browser {
+            commonWebpackConfig {
+                outputFileName = "whenwheremeet-js.js"
+            }
+        }
+        binaries.executable()
+    }
+
+    wasmJs {
+        browser {
+            commonWebpackConfig {
+                outputFileName = "whenwheremeet-wasm.js"
+            }
+        }
+        binaries.executable()
+    }
     
     sourceSets {
-        androidMain.dependencies {
-            implementation(libs.compose.uiToolingPreview)
-            implementation(project.dependencies.platform(libs.firebase.bom))
-            implementation(libs.androidx.activity.compose)
-            implementation(libs.play.services.auth)
+        val commonMain by getting {
+            dependencies {
+                implementation(libs.compose.runtime)
+                implementation(libs.compose.foundation)
+                implementation(libs.compose.material3)
+                implementation(libs.compose.ui)
+                implementation(libs.compose.components.resources)
+                implementation(libs.compose.uiToolingPreview)
+                implementation(libs.androidx.lifecycle.viewmodelCompose)
+                implementation(libs.androidx.lifecycle.runtimeCompose)
+                implementation(libs.kotlinx.coroutines.core)
+                implementation(libs.kotlinx.datetime)
+                implementation(libs.kotlinx.serialization.json)
+                implementation(libs.kizitonwose.calendar.compose.multiplatform)
+                implementation(project.dependencies.platform(libs.koin.bom))
+                implementation(libs.koin.core)
+                implementation(libs.koin.compose)
+            }
         }
-        commonMain.dependencies {
-            implementation(libs.compose.runtime)
-            implementation(libs.compose.foundation)
-            implementation(libs.compose.material3)
-            implementation(libs.compose.ui)
-            implementation(libs.compose.components.resources)
-            implementation(libs.compose.uiToolingPreview)
-            implementation(libs.androidx.lifecycle.viewmodelCompose)
-            implementation(libs.androidx.lifecycle.runtimeCompose)
-            implementation(libs.kotlinx.coroutines.core)
-            implementation(libs.kotlinx.datetime)
-            implementation(libs.kotlinx.serialization.json)
-            implementation(libs.firebase.auth)
-            implementation(libs.firebase.firestore)
-            implementation(libs.kizitonwose.calendar.compose.multiplatform)
-            implementation(libs.androidx.room.runtime)
-            implementation(libs.androidx.sqlite.bundled)
+        val commonTest by getting {
+            dependencies {
+                implementation(libs.kotlin.test)
+                implementation(libs.kotlinx.coroutines.test)
+            }
         }
-        commonTest.dependencies {
-            implementation(libs.kotlin.test)
-            implementation(libs.kotlinx.coroutines.test)
+        val mobileMain by creating {
+            dependsOn(commonMain)
+            dependencies {
+                implementation(libs.firebase.auth)
+                implementation(libs.firebase.firestore)
+            }
+        }
+        val androidMain by getting {
+            dependsOn(mobileMain)
+            dependencies {
+                implementation(libs.compose.uiToolingPreview)
+                implementation(project.dependencies.platform(libs.firebase.bom))
+                implementation(libs.androidx.activity.compose)
+                implementation(libs.play.services.auth)
+            }
+        }
+        val iosMain by creating {
+            dependsOn(mobileMain)
+        }
+        val iosArm64Main by getting {
+            dependsOn(iosMain)
+        }
+        val iosSimulatorArm64Main by getting {
+            dependsOn(iosMain)
+        }
+        val webMain by creating {
+            dependsOn(commonMain)
+            dependencies {
+                implementation(libs.kotlin.web)
+            }
+        }
+        val jsMain by getting {
+            dependsOn(webMain)
+        }
+        val wasmJsMain by getting {
+            dependsOn(webMain)
         }
     }
 }
 
 dependencies {
     androidRuntimeClasspath(libs.compose.uiTooling)
-    add("kspAndroid", libs.androidx.room.compiler)
-    add("kspIosArm64", libs.androidx.room.compiler)
-    add("kspIosSimulatorArm64", libs.androidx.room.compiler)
 }
