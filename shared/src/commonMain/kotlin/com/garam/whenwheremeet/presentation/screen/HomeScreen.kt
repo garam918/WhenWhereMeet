@@ -1,7 +1,6 @@
 package com.garam.whenwheremeet.presentation.screen
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,23 +11,18 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.garam.whenwheremeet.presentation.component.MainBottomBar
 import com.garam.whenwheremeet.presentation.component.MainTab
-import com.garam.whenwheremeet.presentation.component.RefreshActionIcon
 import com.garam.whenwheremeet.presentation.component.StatusPill
 import com.garam.whenwheremeet.presentation.component.WwmBackground
 import com.garam.whenwheremeet.presentation.component.WwmBorder
@@ -40,7 +34,6 @@ import com.garam.whenwheremeet.presentation.component.WwmOutlineButton
 import com.garam.whenwheremeet.presentation.component.WwmSectionHeader
 import com.garam.whenwheremeet.presentation.component.WwmSoftIndigo
 import com.garam.whenwheremeet.presentation.component.WwmText
-import com.garam.whenwheremeet.presentation.component.WwmTopBar
 import com.garam.whenwheremeet.presentation.state.HomeDashboardUiState
 import com.garam.whenwheremeet.presentation.state.HomeMeetingCardUiModel
 
@@ -58,11 +51,6 @@ fun HomeScreen(
 ) {
     Box(modifier.fillMaxSize().background(WwmBackground)) {
         Column(Modifier.fillMaxSize()) {
-            WwmTopBar(
-                trailingIconContentDescription = "새로고침",
-                trailingIcon = { RefreshActionIcon() },
-                onTrailingClick = onRefresh,
-            )
             LazyColumn(
                 modifier = Modifier.weight(1f),
                 contentPadding = PaddingValues(start = 20.dp, top = 20.dp, end = 20.dp, bottom = 108.dp),
@@ -90,8 +78,6 @@ fun HomeScreen(
             }
         }
 
-        FloatingCreateButton(onClick = onCreateRoom, modifier = Modifier.align(Alignment.BottomEnd).padding(end = 20.dp, bottom = 88.dp))
-
         MainBottomBar(
             selectedTab = MainTab.HOME,
             onHomeClick = {},
@@ -99,17 +85,6 @@ fun HomeScreen(
             onMyPageClick = onOpenMyPage,
             modifier = Modifier.align(Alignment.BottomCenter),
         )
-    }
-}
-
-@Composable
-private fun FloatingCreateButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Box(
-        modifier.size(56.dp).shadow(6.dp, CircleShape).background(WwmIndigo, CircleShape)
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text("+", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Light)
     }
 }
 
