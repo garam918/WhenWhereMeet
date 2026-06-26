@@ -168,11 +168,18 @@ class LocalMeetingRepository(
     override suspend fun confirmDate(roomId: String, date: LocalDate) {
         val now = Clock.System.now()
         snapshot = snapshot.copy(rooms = snapshot.rooms.map { room ->
-            if (room.id == roomId) room.copy(
-                status = MeetingStatus.DATE_CONFIRMED,
-                confirmedDate = date,
-                updatedAt = now,
-            ) else room
+            if (room.id == roomId) {
+                val dateChanged = room.confirmedDate != null && room.confirmedDate != date
+                room.copy(
+                    status = MeetingStatus.DATE_CONFIRMED,
+                    confirmedDate = date,
+                    selectedAreaCandidateId = if (dateChanged) null else room.selectedAreaCandidateId,
+                    confirmedPlace = if (dateChanged) null else room.confirmedPlace,
+                    updatedAt = now,
+                )
+            } else {
+                room
+            }
         })
         persist()
     }
