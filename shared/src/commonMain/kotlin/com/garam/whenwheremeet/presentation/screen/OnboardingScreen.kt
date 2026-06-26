@@ -42,6 +42,7 @@ import com.garam.whenwheremeet.presentation.component.WwmBorder
 import com.garam.whenwheremeet.presentation.component.WwmCard
 import com.garam.whenwheremeet.presentation.component.WwmIndigo
 import com.garam.whenwheremeet.presentation.component.WwmMint
+import com.garam.whenwheremeet.presentation.component.WwmMintText
 import com.garam.whenwheremeet.presentation.component.WwmMuted
 import com.garam.whenwheremeet.presentation.component.WwmNavBackground
 import com.garam.whenwheremeet.presentation.component.WwmPrimaryButton
@@ -132,7 +133,7 @@ private fun PlaceOnboardingPage(onBack: () -> Unit) {
             Box(Modifier.size(150.dp).border(1.dp, WwmSoftIndigo, CircleShape))
             WwmCard(Modifier.width(210.dp)) {
                 Column(Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("추천 위치 1위", color = Color.White, fontSize = 11.sp, modifier = Modifier.background(Color(0xFF00714D), RoundedCornerShape(99.dp)).padding(horizontal = 10.dp, vertical = 4.dp))
+                    Text("추천 위치 1위", color = Color.White, fontSize = 11.sp, modifier = Modifier.background(WwmMintText, RoundedCornerShape(99.dp)).padding(horizontal = 10.dp, vertical = 4.dp))
                     Spacer(Modifier.height(10.dp))
                     Text("신도림역", color = WwmText, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
                     Text("1호선, 2호선 환승", color = WwmMuted, fontSize = 12.sp)
@@ -156,7 +157,7 @@ private fun PlaceOnboardingPage(onBack: () -> Unit) {
         )
         Spacer(Modifier.height(20.dp))
         Row(
-            Modifier.fillMaxWidth().background(Color(0xFFF0F3FF), RoundedCornerShape(8.dp)).padding(12.dp),
+            Modifier.fillMaxWidth().background(WwmSoftIndigo, RoundedCornerShape(8.dp)).padding(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text("i", color = WwmIndigo, fontWeight = FontWeight.Bold)
@@ -172,7 +173,7 @@ private fun CalendarMock() {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text("11월", color = WwmText, fontWeight = FontWeight.Bold)
-                Text("2, 6월 중 가장 가능", color = Color(0xFF00714D), fontSize = 11.sp, modifier = Modifier.background(WwmMint, RoundedCornerShape(99.dp)).padding(horizontal = 10.dp, vertical = 4.dp))
+                Text("2, 6월 중 가장 가능", color = WwmMintText, fontSize = 11.sp, modifier = Modifier.background(WwmMint, RoundedCornerShape(99.dp)).padding(horizontal = 10.dp, vertical = 4.dp))
             }
             listOf("일", "월", "화", "수", "목", "금", "토").chunked(7).forEach { week ->
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -249,7 +250,7 @@ private fun LoginBottomSheet(
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.align(Alignment.CenterHorizontally).clickable(onClick = onStartWithoutLogin).padding(vertical = 6.dp),
             )
-            Row(Modifier.fillMaxWidth().background(Color(0xFFF0F3FF), RoundedCornerShape(8.dp)).padding(12.dp)) {
+            Row(Modifier.fillMaxWidth().background(WwmSoftIndigo, RoundedCornerShape(8.dp)).padding(12.dp)) {
                 Text("i", color = WwmIndigo, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.width(8.dp))
                 Text("출발 위치는 이동시간 계산에만 사용되며, 다른 참여자에게 정확한 위치가 공개되지 않아요.", color = WwmMuted, fontSize = 12.sp, lineHeight = 17.sp)
