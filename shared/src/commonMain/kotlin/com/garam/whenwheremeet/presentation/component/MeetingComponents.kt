@@ -136,9 +136,10 @@ private fun LegendItem(label: String, color: Color) {
 fun ConfirmedMeetingCard(room: MeetingRoom, participantCount: Int) {
     WwmCard(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            StatusPill("날짜 확정")
+            StatusPill(if (room.confirmedPlace == null) "날짜 확정" else "장소 확정")
             Text(room.confirmedDate?.toKoreanDate().orEmpty(), color = WwmText, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
             Text("${room.title} · 참여자 ${participantCount}명", color = WwmMuted)
+            Text("장소: ${room.confirmedPlace?.name ?: "미정"}", color = WwmMuted)
         }
     }
 }
