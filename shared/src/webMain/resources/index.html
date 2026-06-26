@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#FFFFFF">
+    <meta name="wwm-firebase-api-key" content="">
+    <meta name="wwm-firebase-project-id" content="">
+    <meta name="wwm-firebase-database-id" content="default">
+    <title>WhenWhereMeet</title>
+    <style>
+        html,
+        body,
+        #app,
+        canvas {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background: #FFFFFF;
+            font-family:
+                -apple-system,
+                BlinkMacSystemFont,
+                "Apple SD Gothic Neo",
+                "Malgun Gothic",
+                "맑은 고딕",
+                "Noto Sans KR",
+                "Noto Sans CJK KR",
+                "Segoe UI",
+                sans-serif;
+        }
+    </style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+    (function () {
+        function loadScript(src, onError) {
+            var script = document.createElement("script");
+            script.src = src;
+            script.type = "application/javascript";
+            script.onerror = onError;
+            document.body.appendChild(script);
+        }
+
+        loadScript("whenwheremeet-wasm.js", function () {
+            loadScript("whenwheremeet-js.js");
+        });
+    })();
+</script>
+</body>
+</html>
