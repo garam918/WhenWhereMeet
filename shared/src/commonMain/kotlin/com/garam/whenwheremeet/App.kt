@@ -13,13 +13,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import com.garam.whenwheremeet.data.local.platformKeyValueStorage
-import com.garam.whenwheremeet.data.provider.FakeLocationSearchProvider
-import com.garam.whenwheremeet.data.provider.FakePlaceSearchProvider
 import com.garam.whenwheremeet.data.provider.MetropolitanMeetingAreaCandidateProvider
-import com.garam.whenwheremeet.data.provider.StaticMetropolitanTransitTimeProvider
-import com.garam.whenwheremeet.data.repository.FirestoreMeetingRepository
-import com.garam.whenwheremeet.data.repository.LocalMeetingRepository
+import com.garam.whenwheremeet.data.local.KeyValueStorage
+import com.garam.whenwheremeet.di.appModule
 import com.garam.whenwheremeet.platform.AuthSession
 import com.garam.whenwheremeet.platform.rememberShareService
 import com.garam.whenwheremeet.platform.rememberAuthPlatform
@@ -38,10 +34,10 @@ import com.garam.whenwheremeet.presentation.state.AppRoute
 import com.garam.whenwheremeet.presentation.state.MeetingAppState
 import com.garam.whenwheremeet.presentation.state.UiAction
 import com.garam.whenwheremeet.presentation.state.UiEvent
-import com.garam.whenwheremeet.domain.usecase.RecommendMeetingAreasUseCase
-import dev.gitlive.firebase.Firebase
-import dev.gitlive.firebase.auth.auth
 import kotlinx.coroutines.launch
+import org.koin.compose.KoinApplication
+import org.koin.compose.getKoin
+import org.koin.compose.koinInject
 
 private const val TemporaryFeedbackUrl = "https://example.com"
 private const val TemporaryTermsUrl = "https://example.com"
@@ -49,24 +45,27 @@ private const val TemporaryPrivacyUrl = "https://example.com"
 private const val OnboardingCompletedKey = "onboarding_completed"
 private const val MeetingSnapshotKey = "meeting_mvp_snapshot_v1"
 
+@Suppress("DEPRECATION")
 @Composable
 fun App() {
-    val storage = remember { platformKeyValueStorage() }
+    KoinApplication(application = { modules(appModule) }) {
+        AppContent()
+    }
+}
+
+@Composable
+private fun AppContent() {
+    val storage = koinInject<KeyValueStorage>()
     var onboardingCompleted by remember {
         mutableStateOf(storage.getString(OnboardingCompletedKey) == "true")
     }
     var authSession by remember { mutableStateOf(currentAuthSession()) }
     var appDataGeneration by remember { mutableStateOf(0) }
+    val koin = getKoin()
     val appState = remember(appDataGeneration) {
-        val localRepository = LocalMeetingRepository(storage)
-        MeetingAppState(
-            repository = FirestoreMeetingRepository(localRepository),
-            locationSearchProvider = FakeLocationSearchProvider(),
-            recommendMeetingAreas = RecommendMeetingAreasUseCase(StaticMetropolitanTransitTimeProvider()),
-            placeSearchProvider = FakePlaceSearchProvider(),
-        )
+        koin.get<MeetingAppState>()
     }
-    val areaCandidateProvider = remember { MetropolitanMeetingAreaCandidateProvider() }
+    val areaCandidateProvider = koinInject<MetropolitanMeetingAreaCandidateProvider>()
     val coroutineScope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
     val shareService = rememberShareService()
@@ -74,6 +73,12 @@ fun App() {
     val authPlatform = rememberAuthPlatform()
     val externalUrlLauncher = rememberExternalUrlLauncher()
     val event = appState.event
+
+    LaunchedEffect(Unit) {
+        initialRoomCodeFromLaunch()?.let { roomCode ->
+            appState.dispatch(UiAction.OpenJoinRoom(roomCode))
+        }
+    }
 
     fun completeOnboarding() {
         storage.putString(OnboardingCompletedKey, "true")
@@ -99,7 +104,7 @@ fun App() {
     }
 
     LaunchedEffect(onboardingCompleted) {
-        if (onboardingCompleted && Firebase.auth.currentUser == null) {
+        if (onboardingCompleted && authSession == null) {
             runCatching { authPlatform.signInAnonymously() }
                 .onSuccess { authSession = it }
                 .onFailure { snackbarHostState.showSnackbar(it.authErrorMessage("익명 로그인에 실패했어요.")) }
@@ -291,14 +296,3 @@ fun App() {
 
 private fun Throwable.authErrorMessage(fallback: String): String =
     message?.takeIf { it.isNotBlank() } ?: fallback
-
-private fun currentAuthSession(): AuthSession? {
-    val user = Firebase.auth.currentUser ?: return null
-    return AuthSession(
-        uid = user.uid,
-        displayName = user.displayName,
-        email = user.email,
-        isAnonymous = user.isAnonymous,
-        providerId = user.providerId,
-    )
-}
