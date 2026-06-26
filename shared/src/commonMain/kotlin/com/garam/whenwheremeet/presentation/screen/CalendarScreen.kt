@@ -33,12 +33,12 @@ import com.garam.whenwheremeet.domain.usecase.CalendarFilter
 import com.garam.whenwheremeet.domain.usecase.CalendarMonth
 import com.garam.whenwheremeet.presentation.component.MainBottomBar
 import com.garam.whenwheremeet.presentation.component.MainTab
-import com.garam.whenwheremeet.presentation.component.RefreshActionIcon
 import com.garam.whenwheremeet.presentation.component.StatusPill
 import com.garam.whenwheremeet.presentation.component.WwmBackground
 import com.garam.whenwheremeet.presentation.component.WwmBorder
 import com.garam.whenwheremeet.presentation.component.WwmCard
 import com.garam.whenwheremeet.presentation.component.WwmEmptyState
+import com.garam.whenwheremeet.presentation.component.WwmError
 import com.garam.whenwheremeet.presentation.component.WwmIndigo
 import com.garam.whenwheremeet.presentation.component.WwmMint
 import com.garam.whenwheremeet.presentation.component.WwmMuted
@@ -47,7 +47,6 @@ import com.garam.whenwheremeet.presentation.component.WwmPrimaryButton
 import com.garam.whenwheremeet.presentation.component.WwmSectionHeader
 import com.garam.whenwheremeet.presentation.component.WwmSoftIndigo
 import com.garam.whenwheremeet.presentation.component.WwmText
-import com.garam.whenwheremeet.presentation.component.WwmTopBar
 import com.garam.whenwheremeet.presentation.state.CalendarDayUiModel
 import com.garam.whenwheremeet.presentation.state.CalendarMeetingItemUiModel
 import com.garam.whenwheremeet.presentation.state.CalendarUiState
@@ -79,12 +78,6 @@ fun CalendarScreen(
 ) {
     Box(modifier.fillMaxSize().background(WwmBackground)) {
         Column(Modifier.fillMaxSize()) {
-            WwmTopBar(
-                title = "캘린더",
-                trailingIconContentDescription = "새로고침",
-                trailingIcon = { RefreshActionIcon() },
-                onTrailingClick = onRefresh,
-            )
             LazyColumn(
                 modifier = Modifier.weight(1f),
                 contentPadding = PaddingValues(start = 20.dp, top = 18.dp, end = 20.dp, bottom = 108.dp),
@@ -319,7 +312,7 @@ private fun CalendarDayIndicator.color(): Color = when (this) {
     CalendarDayIndicator.CONFIRMED -> WwmMint
     CalendarDayIndicator.COLLECTING_AVAILABILITY -> WwmOrange
     CalendarDayIndicator.PLACE_SELECTING -> WwmIndigo
-    CalendarDayIndicator.MY_ACTION_REQUIRED -> Color(0xFFE23C65)
+    CalendarDayIndicator.MY_ACTION_REQUIRED -> WwmError
     CalendarDayIndicator.CANCELLED -> WwmMuted
 }
 
