@@ -44,6 +44,7 @@ import com.garam.whenwheremeet.presentation.component.MainTab
 import com.garam.whenwheremeet.presentation.component.WwmBackground
 import com.garam.whenwheremeet.presentation.component.WwmBorder
 import com.garam.whenwheremeet.presentation.component.WwmCard
+import com.garam.whenwheremeet.presentation.component.WwmError
 import com.garam.whenwheremeet.presentation.component.WwmIndigo
 import com.garam.whenwheremeet.presentation.component.WwmMuted
 import com.garam.whenwheremeet.presentation.component.WwmText
@@ -248,7 +249,7 @@ private fun AccountSettingsContent(
                         onDeleteAccount()
                     },
                 ) {
-                    Text("탈퇴", color = Color(0xFFD32F2F))
+                    Text("탈퇴", color = WwmError)
                 }
             },
             dismissButton = {
@@ -361,10 +362,10 @@ private fun SettingsActionButton(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth().height(48.dp),
         shape = RoundedCornerShape(8.dp),
-        border = BorderStroke(1.dp, if (danger) Color(0xFFD32F2F) else WwmBorder),
+        border = BorderStroke(1.dp, if (danger) WwmError else WwmBorder),
         colors = ButtonDefaults.outlinedButtonColors(
             containerColor = Color.White,
-            contentColor = if (danger) Color(0xFFD32F2F) else WwmText,
+            contentColor = if (danger) WwmError else WwmText,
         ),
     ) {
         Text(text, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
