@@ -107,16 +107,20 @@ class SortPlacesByVotesUseCase(
 
 class BuildConfirmedMeetingShareTextUseCase {
     operator fun invoke(room: MeetingRoom, participantCount: Int): String {
-        val place = requireNotNull(room.confirmedPlace)
         val date = requireNotNull(room.confirmedDate)
         return buildString {
             appendLine("[약속 확정]")
             appendLine()
             appendLine("약속명: ${room.title}")
             appendLine("날짜: ${date.toKoreanDate()}")
-            appendLine("장소: ${place.name}")
-            place.roadAddress?.let { appendLine("주소: $it") }
-            place.mapUrl?.let { appendLine("지도: $it") }
+            val place = room.confirmedPlace
+            if (place == null) {
+                appendLine("장소: 미정")
+            } else {
+                appendLine("장소: ${place.name}")
+                place.roadAddress?.let { appendLine("주소: $it") }
+                place.mapUrl?.let { appendLine("지도: $it") }
+            }
             appendLine()
             append("참여자: ${participantCount}명")
         }
