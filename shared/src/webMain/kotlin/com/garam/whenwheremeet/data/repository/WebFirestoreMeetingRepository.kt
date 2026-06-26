@@ -1,0 +1,486 @@
+package com.garam.whenwheremeet.data.repository
+
+import com.garam.whenwheremeet.domain.model.Availability
+import com.garam.whenwheremeet.domain.model.AvailabilityStatus
+import com.garam.whenwheremeet.domain.model.AreaRecommendation
+import com.garam.whenwheremeet.domain.model.MeetingRoom
+import com.garam.whenwheremeet.domain.model.MeetingStatus
+import com.garam.whenwheremeet.domain.model.MeetingType
+import com.garam.whenwheremeet.domain.model.Participant
+import com.garam.whenwheremeet.domain.model.ParticipantTravelPreference
+import com.garam.whenwheremeet.domain.model.PlaceCandidate
+import com.garam.whenwheremeet.domain.model.PlaceVote
+import com.garam.whenwheremeet.domain.model.PlaceVoteType
+import com.garam.whenwheremeet.domain.model.ScoredPlaceCandidate
+import com.garam.whenwheremeet.domain.model.TransportMode
+import com.garam.whenwheremeet.domain.model.UserStartLocation
+import com.garam.whenwheremeet.domain.repository.MeetingRepository
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+import kotlinx.datetime.LocalDate
+import kotlinx.datetime.LocalDateTime
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.UtcOffset
+import kotlinx.datetime.toInstant
+import kotlinx.datetime.toLocalDateTime
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.int
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
+import web.http.RequestMethod
+import web.http.fetch
+import web.http.GET
+import web.http.POST
+import web.http.text
+import kotlin.time.Clock
+import kotlin.time.Instant
+
+class WebFirestoreMeetingRepository(
+    private val local: LocalMeetingRepository,
+    private val config: WebFirebaseConfig,
+    private val auth: WebFirebaseAuth,
+) : MeetingRepository {
+    private val json = Json { ignoreUnknownKeys = true }
+
+    override fun getRooms(): List<MeetingRoom> = local.getRooms()
+    override fun getRoom(roomIdOrCode: String): MeetingRoom? = local.getRoom(roomIdOrCode)
+    override fun getParticipants(roomId: String): List<Participant> = local.getParticipants(roomId)
+    override fun getAvailabilities(roomId: String): List<Availability> = local.getAvailabilities(roomId)
+    override fun getCurrentParticipantId(roomId: String): String? = local.getCurrentParticipantId(roomId)
+    override fun getStartLocations(roomId: String): List<UserStartLocation> = local.getStartLocations(roomId)
+    override fun getTravelPreferences(roomId: String): List<ParticipantTravelPreference> = local.getTravelPreferences(roomId)
+    override fun getAreaRecommendations(roomId: String): List<AreaRecommendation> = local.getAreaRecommendations(roomId)
+    override fun getPlaceCandidates(roomId: String): List<ScoredPlaceCandidate> = local.getPlaceCandidates(roomId)
+    override fun getPlaceVotes(roomId: String): List<PlaceVote> = local.getPlaceVotes(roomId)
+
+    override suspend fun getRoomForJoin(roomIdOrCode: String): MeetingRoom? {
+        val code = roomIdOrCode.normalizedRoomCode()
+        local.getRoom(code)?.let { return it }
+        val codeDoc = getDocument("roomCodes/$code")
+        val roomId = codeDoc?.fields()?.stringField("roomId") ?: code
+        val roomDoc = getDocument("meetingRooms/$roomId") ?: return null
+        val room = roomDoc.fields().toMeetingRoom()
+        local.importRoom(room, loadParticipants(room.id), local.getCurrentParticipantId(room.id))
+        local.importAvailabilities(room.id, loadAvailabilities(room.id))
+        return room
+    }
+
+    override suspend fun refreshRoom(roomId: String) {
+        val localRoom = local.getRoom(roomId)
+        val remoteRoomId = localRoom?.id ?: roomId.normalizedRoomCode()
+        val roomDoc = getDocument("meetingRooms/$remoteRoomId")
+        if (roomDoc == null) {
+            localRoom?.let { local.deleteRoom(it.id) }
+            return
+        }
+        val remoteRoom = roomDoc.fields().toMeetingRoom()
+        local.importRoom(
+            room = mergeRemoteRoom(remoteRoom),
+            participants = loadParticipants(remoteRoom.id),
+            currentParticipantId = local.getCurrentParticipantId(remoteRoom.id),
+        )
+        local.importAvailabilities(remoteRoom.id, loadAvailabilities(remoteRoom.id))
+    }
+
+    override fun observeRoom(roomId: String): Flow<Unit> = flow {
+        while (true) {
+            refreshRoom(roomId)
+            emit(Unit)
+            delay(5_000)
+        }
+    }
+
+    override suspend fun createRoom(room: MeetingRoom, host: Participant) {
+        val code = room.id.normalizedRoomCode()
+        val roomToStore = room.copy(id = code, maxParticipants = room.maxParticipants.coerceAtLeast(2))
+        val hostToStore = host.copy(roomId = code)
+        val authUid = currentAuthUid()
+        commit(
+            updateWrite("meetingRooms/$code", roomToStore.toFirestoreFields(participantCount = 1, hostAuthUid = authUid), exists = false),
+            updateWrite("roomCodes/$code", roomCodeFields(code, code, room.createdAt), exists = false),
+            updateWrite("meetingRooms/$code/participants/${host.id}", hostToStore.toFirestoreFields(authUid), exists = false),
+            updateWrite("meetingRooms/$code/nicknameKeys/${host.nickname.nicknameKey()}", nicknameFields(host.id), exists = false),
+        )
+        local.createRoom(roomToStore, hostToStore)
+    }
+
+    override suspend fun joinRoom(participant: Participant) {
+        val room = getRoomForJoin(participant.roomId)
+            ?: throw IllegalArgumentException("방 코드를 확인해주세요.")
+        val participantToStore = participant.copy(roomId = room.id)
+        val currentRoomDoc = requireNotNull(getDocument("meetingRooms/${room.id}")) { "방 코드를 확인해주세요." }
+        val currentParticipantCount = currentRoomDoc.fields().intField("participantCount")
+        val currentMaxParticipants = currentRoomDoc.fields().intField("maxParticipants").coerceAtLeast(room.maxParticipants)
+        require(currentParticipantCount < currentMaxParticipants) { "정원이 가득 차서 참여할 수 없습니다." }
+        require(getDocument("meetingRooms/${room.id}/nicknameKeys/${participant.nickname.nicknameKey()}") == null) {
+            "이미 사용 중인 닉네임입니다."
+        }
+        val authUid = currentAuthUid()
+        val updatedRoom = room.copy(updatedAt = participant.joinedAt)
+        commit(
+            updateWrite(
+                "meetingRooms/${room.id}",
+                updatedRoom.toFirestoreFields(participantCount = currentParticipantCount + 1, hostAuthUid = currentRoomDoc.fields().optionalStringField("hostAuthUid")),
+                exists = true,
+            ),
+            updateWrite("meetingRooms/${room.id}/participants/${participant.id}", participantToStore.toFirestoreFields(authUid), exists = false),
+            updateWrite("meetingRooms/${room.id}/nicknameKeys/${participant.nickname.nicknameKey()}", nicknameFields(participant.id), exists = false),
+        )
+        local.importRoom(
+            room = room,
+            participants = (loadParticipants(room.id) + participantToStore).distinctBy { it.id },
+            currentParticipantId = participant.id,
+        )
+    }
+
+    override suspend fun leaveRoom(roomId: String, participantId: String) {
+        val room = getRoom(roomId) ?: throw IllegalArgumentException("방 정보를 찾을 수 없습니다.")
+        require(room.hostParticipantId != participantId) { "방장은 방을 나갈 수 없습니다." }
+        val participant = getParticipants(room.id).firstOrNull { it.id == participantId }
+            ?: throw IllegalArgumentException("참여자 정보를 찾을 수 없습니다.")
+        val currentRoomDoc = requireNotNull(getDocument("meetingRooms/${room.id}")) { "방 정보를 찾을 수 없습니다." }
+        val current = currentRoomDoc.fields()
+        val participantCount = (current.intField("participantCount") - 1).coerceAtLeast(1)
+        val updated = room.copy(
+            requiredParticipantIds = room.requiredParticipantIds - participantId,
+            updatedAt = Clock.System.now(),
+        )
+        val writes = mutableListOf<JsonObject>()
+        writes += updateWrite(
+            "meetingRooms/${room.id}",
+            updated.toFirestoreFields(participantCount = participantCount, hostAuthUid = current.optionalStringField("hostAuthUid")),
+            exists = true,
+        )
+        writes += deleteWrite("meetingRooms/${room.id}/participants/$participantId")
+        writes += deleteWrite("meetingRooms/${room.id}/nicknameKeys/${participant.nickname.nicknameKey()}")
+        loadAvailabilities(room.id)
+            .filter { it.participantId == participantId }
+            .forEach { writes += deleteWrite("meetingRooms/${room.id}/availabilities/${participantId}-${it.date}") }
+        commit(*writes.toTypedArray())
+        local.leaveRoom(room.id, participantId)
+    }
+
+    override suspend fun deleteRoom(roomId: String) {
+        val room = getRoom(roomId) ?: throw IllegalArgumentException("방 정보를 찾을 수 없습니다.")
+        val participants = loadParticipants(room.id)
+        val availabilities = loadAvailabilities(room.id)
+        val writes = mutableListOf<JsonObject>()
+        participants.forEach {
+            writes += deleteWrite("meetingRooms/${room.id}/participants/${it.id}")
+            writes += deleteWrite("meetingRooms/${room.id}/nicknameKeys/${it.nickname.nicknameKey()}")
+        }
+        availabilities.forEach {
+            writes += deleteWrite("meetingRooms/${room.id}/availabilities/${it.participantId}-${it.date}")
+        }
+        writes += deleteWrite("roomCodes/${room.id.normalizedRoomCode()}")
+        writes += deleteWrite("meetingRooms/${room.id}")
+        commit(*writes.toTypedArray())
+        local.deleteRoom(room.id)
+    }
+
+    override suspend fun saveAvailabilities(roomId: String, participantId: String, values: Map<LocalDate, AvailabilityStatus>) {
+        val room = getRoom(roomId) ?: throw IllegalArgumentException("방 정보를 찾을 수 없습니다.")
+        val previous = loadAvailabilities(room.id).filter { it.participantId == participantId }
+        val writes = mutableListOf<JsonObject>()
+        previous
+            .filterNot { values.containsKey(it.date) }
+            .forEach { writes += deleteWrite("meetingRooms/${room.id}/availabilities/$participantId-${it.date}") }
+        values.forEach { (date, status) ->
+            val availability = Availability(room.id, participantId, date, status, Clock.System.now())
+            writes += updateWrite(
+                "meetingRooms/${room.id}/availabilities/$participantId-$date",
+                availability.toFirestoreFields(),
+                exists = null,
+            )
+        }
+        commit(*writes.toTypedArray())
+        local.saveAvailabilities(room.id, participantId, values)
+    }
+
+    override suspend fun confirmDate(roomId: String, date: LocalDate) {
+        val room = getRoom(roomId) ?: throw IllegalArgumentException("방 정보를 찾을 수 없습니다.")
+        val roomDoc = requireNotNull(getDocument("meetingRooms/${room.id}")) { "방 정보를 찾을 수 없습니다." }
+        val dateChanged = room.confirmedDate != null && room.confirmedDate != date
+        val updated = room.copy(
+            status = MeetingStatus.DATE_CONFIRMED,
+            confirmedDate = date,
+            selectedAreaCandidateId = if (dateChanged) null else room.selectedAreaCandidateId,
+            confirmedPlace = if (dateChanged) null else room.confirmedPlace,
+            updatedAt = Clock.System.now(),
+        )
+        commit(
+            updateWrite(
+                "meetingRooms/${room.id}",
+                updated.toFirestoreFields(
+                    participantCount = loadParticipants(room.id).size,
+                    hostAuthUid = roomDoc.fields().optionalStringField("hostAuthUid"),
+                ),
+                exists = true,
+            ),
+        )
+        local.confirmDate(room.id, date)
+    }
+
+    override fun saveStartLocation(location: UserStartLocation) = local.saveStartLocation(location)
+    override fun saveTransportMode(roomId: String, participantId: String, transportMode: TransportMode) = local.saveTransportMode(roomId, participantId, transportMode)
+    override fun saveAreaRecommendations(roomId: String, recommendations: List<AreaRecommendation>) = local.saveAreaRecommendations(roomId, recommendations)
+    override fun selectAreaCandidate(roomId: String, candidateId: String) = local.selectAreaCandidate(roomId, candidateId)
+    override fun savePlaceCandidates(roomId: String, candidates: List<ScoredPlaceCandidate>) = local.savePlaceCandidates(roomId, candidates)
+    override fun savePlaceVote(roomId: String, placeId: String, participantId: String, voteType: PlaceVoteType) = local.savePlaceVote(roomId, placeId, participantId, voteType)
+    override fun confirmPlace(roomId: String, place: PlaceCandidate) = local.confirmPlace(roomId, place)
+
+    private suspend fun loadParticipants(roomId: String): List<Participant> =
+        listDocuments("meetingRooms/$roomId/participants").map { it.fields().toParticipant() }
+
+    private suspend fun loadAvailabilities(roomId: String): List<Availability> =
+        listDocuments("meetingRooms/$roomId/availabilities").map { it.fields().toAvailability() }
+
+    private suspend fun getDocument(path: String): JsonObject? {
+        val response = fetch(documentUrl(path), jsonRequest(RequestMethod.GET, bearerToken = currentIdToken()))
+        val responseText = response.text()
+        if (response.status.toInt() == 404) return null
+        if (!response.ok) throw IllegalStateException(firebaseErrorMessage(response.status.toInt(), responseText))
+        return json.parseToJsonElement(responseText).jsonObject
+    }
+
+    private suspend fun listDocuments(path: String): List<JsonObject> {
+        val response = fetch(documentUrl(path), jsonRequest(RequestMethod.GET, bearerToken = currentIdToken()))
+        val responseText = response.text()
+        if (response.status.toInt() == 404) return emptyList()
+        if (!response.ok) throw IllegalStateException(firebaseErrorMessage(response.status.toInt(), responseText))
+        val body = json.parseToJsonElement(responseText).jsonObject
+        return body["documents"]?.jsonArray?.map { it.jsonObject }.orEmpty()
+    }
+
+    private suspend fun commit(vararg writes: JsonObject) {
+        if (writes.isEmpty()) return
+        val body = buildJsonObject {
+            put("writes", JsonArray(writes.toList()))
+        }.toString()
+        val response = fetch(
+            url = "https://firestore.googleapis.com/v1/projects/${config.projectId}/databases/${config.databaseId}/documents:commit",
+            init = jsonRequest(RequestMethod.POST, body, currentIdToken()),
+        )
+        val responseText = response.text()
+        if (!response.ok) throw IllegalStateException(firebaseErrorMessage(response.status.toInt(), responseText))
+    }
+
+    private fun currentAuthUid(): String =
+        requireNotNull(auth.currentSession()?.uid) { "로그인 정보를 확인할 수 없습니다." }
+
+    private suspend fun currentIdToken(): String =
+        auth.currentIdToken() ?: auth.signInAnonymously().let {
+            requireNotNull(auth.currentIdToken()) { "웹 로그인 토큰을 가져오지 못했어요." }
+        }
+
+    private fun documentUrl(path: String): String =
+        "https://firestore.googleapis.com/v1/projects/${config.projectId}/databases/${config.databaseId}/documents/${path.encodePath()}"
+
+    private fun documentName(path: String): String =
+        "projects/${config.projectId}/databases/${config.databaseId}/documents/$path"
+
+    private fun updateWrite(path: String, fields: JsonObject, exists: Boolean?): JsonObject = buildJsonObject {
+        put("update", buildJsonObject {
+            put("name", documentName(path))
+            put("fields", fields)
+        })
+        if (exists != null) {
+            put("currentDocument", buildJsonObject { put("exists", exists) })
+        }
+    }
+
+    private fun deleteWrite(path: String): JsonObject = buildJsonObject {
+        put("delete", documentName(path))
+    }
+
+    private fun mergeRemoteRoom(remoteRoom: MeetingRoom): MeetingRoom {
+        val localRoom = local.getRoom(remoteRoom.id) ?: return remoteRoom
+        return remoteRoom.copy(
+            selectedAreaCandidateId = localRoom.selectedAreaCandidateId,
+            confirmedPlace = localRoom.confirmedPlace,
+        )
+    }
+
+    private fun firebaseErrorMessage(status: Int, responseText: String): String {
+        val parsed = runCatching { json.parseToJsonElement(responseText).jsonObject }.getOrNull()
+        val message = parsed?.get("error")?.jsonObject?.get("message")?.jsonPrimitive?.contentOrNull
+        return when {
+            status == 401 -> "웹 로그인 정보가 만료됐어요. 다시 시작해주세요."
+            status == 403 -> "Firestore 접근 권한이 없어요. 보안 규칙과 웹 Firebase 설정을 확인해주세요."
+            status == 404 -> "Firestore 데이터를 찾지 못했어요."
+            !message.isNullOrBlank() -> message
+            else -> "Firestore 요청에 실패했어요. ($status)"
+        }
+    }
+}
+
+private fun MeetingRoom.toFirestoreFields(participantCount: Int, hostAuthUid: String?): JsonObject = buildJsonObject {
+    put("id", stringValue(id))
+    put("title", stringValue(title))
+    description?.let { put("description", stringValue(it)) }
+    put("meetingType", stringValue(meetingType.name))
+    put("dateRangeStart", stringValue(dateRangeStart.toString()))
+    put("dateRangeEnd", stringValue(dateRangeEnd.toString()))
+    put("minParticipants", integerValue(minParticipants))
+    put("maxParticipants", integerValue(maxParticipants))
+    put("participantCount", integerValue(participantCount))
+    responseDeadline?.let { put("responseDeadline", stringValue(it.toString())) }
+    put("hostParticipantId", stringValue(hostParticipantId))
+    hostAuthUid?.let { put("hostAuthUid", stringValue(it)) }
+    put("requiredParticipantIds", arrayValue(requiredParticipantIds.map(::stringValue)))
+    put("status", stringValue(status.name))
+    confirmedDate?.let { put("confirmedDate", stringValue(it.toString())) }
+    put("createdAt", stringValue(createdAt.toKoreaIsoString()))
+    put("updatedAt", stringValue(updatedAt.toKoreaIsoString()))
+}
+
+private fun Participant.toFirestoreFields(authUid: String): JsonObject = buildJsonObject {
+    put("id", stringValue(id))
+    put("roomId", stringValue(roomId))
+    put("nickname", stringValue(nickname))
+    put("isHost", booleanValue(isHost))
+    put("isRequired", booleanValue(isRequired))
+    put("authUid", stringValue(authUid))
+    put("joinedAt", stringValue(joinedAt.toKoreaIsoString()))
+}
+
+private fun Availability.toFirestoreFields(): JsonObject = buildJsonObject {
+    put("roomId", stringValue(roomId))
+    put("participantId", stringValue(participantId))
+    put("date", stringValue(date.toString()))
+    put("status", stringValue(status.name))
+    put("updatedAt", stringValue(updatedAt.toKoreaIsoString()))
+}
+
+private fun roomCodeFields(code: String, roomId: String, createdAt: Instant): JsonObject = buildJsonObject {
+    put("code", stringValue(code))
+    put("roomId", stringValue(roomId))
+    put("createdAt", stringValue(createdAt.toKoreaIsoString()))
+}
+
+private fun nicknameFields(participantId: String): JsonObject = buildJsonObject {
+    put("participantId", stringValue(participantId))
+}
+
+private fun JsonObject.toMeetingRoom(): MeetingRoom = MeetingRoom(
+    id = stringField("id"),
+    title = stringField("title"),
+    description = optionalStringField("description"),
+    meetingType = enumValueOf(optionalStringField("meetingType") ?: MeetingType.OTHER.name),
+    dateRangeStart = LocalDate.parse(stringField("dateRangeStart")),
+    dateRangeEnd = LocalDate.parse(stringField("dateRangeEnd")),
+    minParticipants = intField("minParticipants"),
+    maxParticipants = intField("maxParticipants"),
+    responseDeadline = optionalStringField("responseDeadline")?.let(LocalDate::parse),
+    hostParticipantId = stringField("hostParticipantId"),
+    requiredParticipantIds = stringArrayField("requiredParticipantIds"),
+    status = enumValueOf(optionalStringField("status") ?: MeetingStatus.COLLECTING_AVAILABILITY.name),
+    confirmedDate = optionalStringField("confirmedDate")?.let(LocalDate::parse),
+    createdAt = stringField("createdAt").parseFirestoreInstant(),
+    updatedAt = stringField("updatedAt").parseFirestoreInstant(),
+)
+
+private fun JsonObject.toParticipant(): Participant = Participant(
+    id = stringField("id"),
+    roomId = stringField("roomId"),
+    nickname = stringField("nickname"),
+    isHost = boolField("isHost"),
+    isRequired = boolField("isRequired"),
+    joinedAt = stringField("joinedAt").parseFirestoreInstant(),
+)
+
+private fun JsonObject.toAvailability(): Availability = Availability(
+    roomId = stringField("roomId"),
+    participantId = stringField("participantId"),
+    date = LocalDate.parse(stringField("date")),
+    status = enumValueOf(stringField("status")),
+    updatedAt = stringField("updatedAt").parseFirestoreInstant(),
+)
+
+private fun JsonObject.fields(): JsonObject = this["fields"]?.jsonObject ?: JsonObject(emptyMap())
+
+private fun JsonObject.stringField(key: String): String =
+    this[key]?.jsonObject?.get("stringValue")?.jsonPrimitive?.content.orEmpty()
+
+private fun JsonObject.optionalStringField(key: String): String? =
+    stringField(key).takeIf { it.isNotBlank() }
+
+private fun JsonObject.intField(key: String): Int {
+    val field = this[key]?.jsonObject ?: return 0
+    return field["integerValue"]?.jsonPrimitive?.content?.toIntOrNull()
+        ?: field["doubleValue"]?.jsonPrimitive?.content?.toDoubleOrNull()?.toInt()
+        ?: 0
+}
+
+private fun JsonObject.boolField(key: String): Boolean =
+    this[key]?.jsonObject?.get("booleanValue")?.jsonPrimitive?.content == "true"
+
+private fun JsonObject.stringArrayField(key: String): List<String> =
+    this[key]?.jsonObject
+        ?.get("arrayValue")?.jsonObject
+        ?.get("values")?.jsonArray
+        ?.mapNotNull { it.jsonObject["stringValue"]?.jsonPrimitive?.contentOrNull }
+        .orEmpty()
+
+private fun stringValue(value: String): JsonObject = buildJsonObject { put("stringValue", value) }
+private fun integerValue(value: Int): JsonObject = buildJsonObject { put("integerValue", value.toString()) }
+private fun booleanValue(value: Boolean): JsonObject = buildJsonObject { put("booleanValue", value) }
+private fun arrayValue(values: List<JsonElement>): JsonObject = buildJsonObject {
+    put("arrayValue", buildJsonObject { put("values", buildJsonArray { values.forEach { add(it) } }) })
+}
+
+private fun String.normalizedRoomCode(): String = trim().uppercase()
+private fun String.nicknameKey(): String = trim().lowercase()
+
+private val KoreaTimeZone = TimeZone.of("Asia/Seoul")
+
+private fun Instant.toKoreaIsoString(): String = toLocalDateTime(KoreaTimeZone).formatIsoWithOffset()
+
+private fun String.parseFirestoreInstant(): Instant {
+    val value = trim()
+    if (value.endsWith("Z")) return Instant.parse(value)
+    val offsetIndex = value.indexOfOffset()
+    if (offsetIndex == -1) return Instant.parse(value)
+    val localDateTime = LocalDateTime.parse(value.substring(0, offsetIndex))
+    val offset = value.substring(offsetIndex)
+    require(offset == "+09:00") { "지원하지 않는 시간대 형식입니다: $value" }
+    return localDateTime.toInstant(UtcOffset(hours = 9))
+}
+
+private fun LocalDateTime.formatIsoWithOffset(): String =
+    "${date}T${time.hour.twoDigits()}:${time.minute.twoDigits()}:${time.second.twoDigits()}+09:00"
+
+private fun Int.twoDigits(): String = toString().padStart(2, '0')
+
+private fun String.indexOfOffset(): Int {
+    val timeSeparator = indexOf('T')
+    if (timeSeparator == -1) return -1
+    val plus = indexOf('+', startIndex = timeSeparator)
+    if (plus != -1) return plus
+    return indexOf('-', startIndex = timeSeparator + 1)
+}
+
+private fun String.encodePath(): String =
+    split('/').joinToString("/") { it.urlEncode() }
+
+private fun String.urlEncode(): String =
+    encodeToByteArray().joinToString(separator = "") { byte ->
+        val value = byte.toInt() and 0xff
+        when {
+            value in 'A'.code..'Z'.code -> value.toChar().toString()
+            value in 'a'.code..'z'.code -> value.toChar().toString()
+            value in '0'.code..'9'.code -> value.toChar().toString()
+            value == '-'.code || value == '_'.code || value == '.'.code || value == '~'.code -> value.toChar().toString()
+            else -> "%${value.toString(16).uppercase().padStart(2, '0')}"
+        }
+    }
