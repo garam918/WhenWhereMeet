@@ -8,6 +8,7 @@ plugins {
 
 if (file("google-services.json").exists()) {
     apply(plugin = "com.google.gms.google-services")
+    apply(plugin = "com.google.firebase.crashlytics")
 }
 
 kotlin {
@@ -21,6 +22,8 @@ dependencies {
     implementation(libs.androidx.activity.compose)
 
     implementation(libs.compose.uiToolingPreview)
+    implementation(project.dependencies.platform(libs.firebase.bom))
+    implementation(libs.firebase.crashlytics)
     debugImplementation(libs.compose.uiTooling)
 }
 
