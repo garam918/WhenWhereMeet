@@ -25,6 +25,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.Typography
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -33,46 +34,71 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import org.jetbrains.compose.resources.Font
+import whenwheremeet.shared.generated.resources.Res
+import whenwheremeet.shared.generated.resources.pretendard_bold
+import whenwheremeet.shared.generated.resources.pretendard_extra_bold
+import whenwheremeet.shared.generated.resources.pretendard_medium
+import whenwheremeet.shared.generated.resources.pretendard_regular
+import whenwheremeet.shared.generated.resources.pretendard_semi_bold
 
-val WwmIndigo = Color(0xFF3525CD)
-val WwmIndigoBright = Color(0xFF4F46E5)
-val WwmBackground = Color(0xFFF9F9FF)
-val WwmNavBackground = Color(0xFFE7EEFE)
-val WwmSoftIndigo = Color(0xFFE2DFFF)
-val WwmBorder = Color(0xFFDCE2F3)
-val WwmText = Color(0xFF151C27)
-val WwmMuted = Color(0xFF464555)
-val WwmMint = Color(0xFF6CF8BB)
-val WwmMintText = Color(0xFF00714D)
-val WwmOrange = Color(0xFFFFD7A3)
+val WwmIndigo = Color(0xFF4F46E5)
+val WwmIndigoBright = Color(0xFF4338CA)
+val WwmBackground = Color(0xFFF8F7FF)
+val WwmNavBackground = Color(0xFFF8F7FF)
+val WwmSoftIndigo = Color(0xFFEDEBFF)
+val WwmBorder = Color(0xFFE5E7EB)
+val WwmText = Color(0xFF111827)
+val WwmMuted = Color(0xFF6B7280)
+val WwmMint = Color(0xFF22C55E)
+val WwmMintText = Color(0xFF16A34A)
+val WwmOrange = Color(0xFFF59E0B)
+val WwmError = Color(0xFFEF4444)
 
 private val WwmColors: ColorScheme = lightColorScheme(
     primary = WwmIndigo,
     onPrimary = Color.White,
     primaryContainer = WwmSoftIndigo,
-    onPrimaryContainer = WwmIndigo,
-    secondary = WwmIndigoBright,
-    secondaryContainer = WwmNavBackground,
+    onPrimaryContainer = WwmIndigoBright,
+    secondary = WwmMint,
+    onSecondary = Color.White,
+    secondaryContainer = WwmMint.copy(alpha = 0.14f),
+    onSecondaryContainer = WwmMintText,
     tertiaryContainer = WwmOrange,
+    onTertiaryContainer = Color.White,
     background = WwmBackground,
     onBackground = WwmText,
     surface = Color.White,
     onSurface = WwmText,
-    surfaceVariant = Color(0xFFF0F3FF),
+    surfaceVariant = WwmBackground,
     onSurfaceVariant = WwmMuted,
+    error = WwmError,
+    onError = Color.White,
     outline = WwmBorder,
     outlineVariant = WwmBorder,
 )
 
 @Composable
+private fun WwmTypography() = Typography(
+    fontFamily = FontFamily(
+        Font(Res.font.pretendard_regular, FontWeight.Normal),
+        Font(Res.font.pretendard_medium, FontWeight.Medium),
+        Font(Res.font.pretendard_semi_bold, FontWeight.SemiBold),
+        Font(Res.font.pretendard_bold, FontWeight.Bold),
+        Font(Res.font.pretendard_extra_bold, FontWeight.ExtraBold),
+    )
+)
+
+@Composable
 fun WwmTheme(content: @Composable () -> Unit) {
-    MaterialTheme(colorScheme = WwmColors, content = content)
+    MaterialTheme(colorScheme = WwmColors, typography = WwmTypography(), content = content)
 }
 
 @Composable
