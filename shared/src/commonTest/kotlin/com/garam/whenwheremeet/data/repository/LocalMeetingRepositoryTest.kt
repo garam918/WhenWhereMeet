@@ -57,6 +57,44 @@ class LocalMeetingRepositoryTest {
     }
 
     @Test
+    fun changingConfirmedDateClearsConfirmedPlace() = runTest {
+        val repository = LocalMeetingRepository(MemoryStorage())
+        val now = Instant.parse("2026-06-01T00:00:00Z")
+        val place = PlaceCandidate(
+            id = "place",
+            name = "기존 장소",
+            category = PlaceCategory.RESTAURANT,
+            latitude = 37.5,
+            longitude = 127.0,
+            source = PlaceSource.FAKE,
+        )
+        val room = MeetingRoom(
+            id = "room",
+            title = "테스트",
+            meetingType = MeetingType.MEAL,
+            dateRangeStart = LocalDate(2026, 6, 20),
+            dateRangeEnd = LocalDate(2026, 6, 22),
+            minParticipants = 1,
+            hostParticipantId = "host",
+            status = MeetingStatus.PLACE_CONFIRMED,
+            confirmedDate = LocalDate(2026, 6, 21),
+            selectedAreaCandidateId = "area",
+            confirmedPlace = place,
+            createdAt = now,
+            updatedAt = now,
+        )
+        repository.createRoom(room, Participant("host", room.id, "방장", true, false, now))
+
+        repository.confirmDate(room.id, LocalDate(2026, 6, 22))
+
+        val updated = assertNotNull(repository.getRoom(room.id))
+        assertEquals(MeetingStatus.DATE_CONFIRMED, updated.status)
+        assertEquals(LocalDate(2026, 6, 22), updated.confirmedDate)
+        assertEquals(null, updated.selectedAreaCandidateId)
+        assertEquals(null, updated.confirmedPlace)
+    }
+
+    @Test
     fun joinRoomRejectsWhenRoomIsFullAndLeaveRemovesCurrentParticipant() = runTest {
         val repository = LocalMeetingRepository(MemoryStorage())
         val now = Instant.parse("2026-06-01T00:00:00Z")
