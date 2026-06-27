@@ -29,6 +29,7 @@ service cloud.firestore {
         && request.resource.data.hostAuthUid == request.auth.uid
         && request.resource.data.participantCount == 1
         && request.resource.data.maxParticipants >= 2
+        && request.resource.data.maxParticipants <= 8
         && existsAfter(/databases/$(database)/documents/meetingRooms/$(roomId)/participants/$(request.resource.data.hostParticipantId))
         && getAfter(/databases/$(database)/documents/meetingRooms/$(roomId)/participants/$(request.resource.data.hostParticipantId)).data.authUid == request.auth.uid;
       allow update: if signedIn()
@@ -42,6 +43,7 @@ service cloud.firestore {
           )
         )
         && request.resource.data.maxParticipants >= resource.data.participantCount
+        && request.resource.data.maxParticipants <= 8
         && request.resource.data.participantCount >= 1
         && request.resource.data.participantCount <= request.resource.data.maxParticipants;
       allow delete: if isRoomHost(roomId);
@@ -73,6 +75,20 @@ service cloud.firestore {
           && request.resource.data.date is string
           && request.resource.data.status in ['AVAILABLE', 'MAYBE', 'UNAVAILABLE'];
         allow delete: if signedIn();
+      }
+
+      match /startLocations/{participantId} {
+        allow read: if signedIn();
+        allow create, update: if signedIn()
+          && request.resource.data.roomId == roomId
+          && request.resource.data.participantId == participantId
+          && request.resource.data.label is string
+          && request.resource.data.privacyLevel in ['EXACT_PRIVATE', 'AREA_ONLY_VISIBLE'];
+        allow delete: if signedIn()
+          && (
+            resource.data.participantId == participantId ||
+            isRoomHost(roomId)
+          );
       }
 
       match /nicknameKeys/{nicknameKey} {

@@ -18,6 +18,29 @@ import kotlin.time.Instant
 
 class LocalMeetingRepositoryTest {
     @Test
+    fun createRoomRejectsMoreThanEightParticipants() = runTest {
+        val repository = LocalMeetingRepository(MemoryStorage())
+        val now = Instant.parse("2026-06-01T00:00:00Z")
+        val room = MeetingRoom(
+            id = "room",
+            title = "테스트",
+            meetingType = MeetingType.MEAL,
+            dateRangeStart = LocalDate(2026, 6, 20),
+            dateRangeEnd = LocalDate(2026, 6, 21),
+            minParticipants = 1,
+            maxParticipants = 9,
+            hostParticipantId = "host",
+            status = MeetingStatus.COLLECTING_AVAILABILITY,
+            createdAt = now,
+            updatedAt = now,
+        )
+
+        assertFailsWith<IllegalArgumentException> {
+            repository.createRoom(room, Participant("host", room.id, "방장", true, now))
+        }
+    }
+
+    @Test
     fun confirmingPlaceChangesRoomStatusAndKeepsDate() = runTest {
         val repository = LocalMeetingRepository(MemoryStorage())
         val now = Instant.parse("2026-06-01T00:00:00Z")
@@ -28,6 +51,7 @@ class LocalMeetingRepositoryTest {
             dateRangeStart = LocalDate(2026, 6, 20),
             dateRangeEnd = LocalDate(2026, 6, 21),
             minParticipants = 1,
+            maxParticipants = 2,
             hostParticipantId = "host",
             status = MeetingStatus.PLACE_SELECTING,
             confirmedDate = LocalDate(2026, 6, 21),
@@ -37,7 +61,7 @@ class LocalMeetingRepositoryTest {
         )
         repository.createRoom(
             room,
-            Participant("host", "room", "방장", true, false, now),
+            Participant("host", "room", "방장", true, now),
         )
         val place = PlaceCandidate(
             id = "place",
@@ -75,6 +99,7 @@ class LocalMeetingRepositoryTest {
             dateRangeStart = LocalDate(2026, 6, 20),
             dateRangeEnd = LocalDate(2026, 6, 22),
             minParticipants = 1,
+            maxParticipants = 2,
             hostParticipantId = "host",
             status = MeetingStatus.PLACE_CONFIRMED,
             confirmedDate = LocalDate(2026, 6, 21),
@@ -83,7 +108,7 @@ class LocalMeetingRepositoryTest {
             createdAt = now,
             updatedAt = now,
         )
-        repository.createRoom(room, Participant("host", room.id, "방장", true, false, now))
+        repository.createRoom(room, Participant("host", room.id, "방장", true, now))
 
         repository.confirmDate(room.id, LocalDate(2026, 6, 22))
 
@@ -111,11 +136,11 @@ class LocalMeetingRepositoryTest {
             createdAt = now,
             updatedAt = now,
         )
-        repository.createRoom(room, Participant("host", room.id, "방장", true, false, now))
-        repository.joinRoom(Participant("guest1", room.id, "손님", false, false, now))
+        repository.createRoom(room, Participant("host", room.id, "방장", true, now))
+        repository.joinRoom(Participant("guest1", room.id, "손님", false, now))
 
         assertFailsWith<IllegalArgumentException> {
-            repository.joinRoom(Participant("guest2", room.id, "다른손님", false, false, now))
+            repository.joinRoom(Participant("guest2", room.id, "다른손님", false, now))
         }
 
         repository.leaveRoom(room.id, "guest1")

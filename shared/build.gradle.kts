@@ -69,6 +69,9 @@ kotlin {
                 implementation(libs.kotlinx.coroutines.core)
                 implementation(libs.kotlinx.datetime)
                 implementation(libs.kotlinx.serialization.json)
+                implementation(libs.ktor.client.core)
+                implementation(libs.ktor.client.content.negotiation)
+                implementation(libs.ktor.serialization.kotlinx.json)
                 implementation(libs.kizitonwose.calendar.compose.multiplatform)
                 implementation(project.dependencies.platform(libs.koin.bom))
                 implementation(libs.koin.core)
@@ -95,10 +98,14 @@ kotlin {
                 implementation(project.dependencies.platform(libs.firebase.bom))
                 implementation(libs.androidx.activity.compose)
                 implementation(libs.play.services.auth)
+                implementation(libs.ktor.client.okhttp)
             }
         }
         val iosMain by creating {
             dependsOn(mobileMain)
+            dependencies {
+                implementation(libs.ktor.client.darwin)
+            }
         }
         val iosArm64Main by getting {
             dependsOn(iosMain)
@@ -114,6 +121,9 @@ kotlin {
         }
         val jsMain by getting {
             dependsOn(webMain)
+            dependencies {
+                implementation(libs.ktor.client.js)
+            }
         }
         val wasmJsMain by getting {
             dependsOn(webMain)

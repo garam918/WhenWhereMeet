@@ -41,7 +41,6 @@ class AggregateAvailabilityUseCase {
                 }
             }
 
-            val required = participants.filter { it.isRequired }
             DateAvailabilitySummary(
                 date = date,
                 availableParticipants = available,
@@ -49,7 +48,6 @@ class AggregateAvailabilityUseCase {
                 unavailableParticipants = unavailable,
                 unansweredParticipants = unanswered,
                 score = available.size * 2 + maybe.size,
-                allRequiredAvailable = required.all { it in available },
             )
         }
     }
@@ -69,7 +67,6 @@ class RecommendDatesUseCase(
             compareByDescending<DateAvailabilitySummary> { it.score }
                 .thenByDescending { it.availableParticipants.size }
                 .thenBy { it.maybeParticipants.size }
-                .thenByDescending { it.allRequiredAvailable }
                 .thenBy { it.unansweredParticipants.size }
                 .thenBy { it.date },
         ).take(limit).mapIndexed { index, summary ->
@@ -80,8 +77,6 @@ class RecommendDatesUseCase(
     private fun recommendationReason(summary: DateAvailabilitySummary): String = when {
         summary.totalParticipants > 0 && summary.availableParticipants.size == summary.totalParticipants ->
             "${summary.totalParticipants}명 모두 가능해요"
-        summary.allRequiredAvailable && summary.availableParticipants.isNotEmpty() ->
-            "필수 참석자가 모두 가능한 날이에요"
         summary.availableParticipants.isNotEmpty() ->
             "가능 인원이 가장 많은 날 중 하나예요"
         else -> "아직 가능한 날짜 응답이 필요해요"

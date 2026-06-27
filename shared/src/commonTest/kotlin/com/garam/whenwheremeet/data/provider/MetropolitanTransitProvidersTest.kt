@@ -86,7 +86,6 @@ class MetropolitanTransitProvidersTest {
         roomId = "room",
         nickname = nickname,
         isHost = id == "p1",
-        isRequired = false,
         joinedAt = now,
     )
 

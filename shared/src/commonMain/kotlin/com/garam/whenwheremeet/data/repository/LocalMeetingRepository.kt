@@ -5,6 +5,8 @@ import com.garam.whenwheremeet.domain.model.Availability
 import com.garam.whenwheremeet.domain.model.AvailabilityStatus
 import com.garam.whenwheremeet.domain.model.AreaRecommendation
 import com.garam.whenwheremeet.domain.model.MeetingRoom
+import com.garam.whenwheremeet.domain.model.MAX_MEETING_PARTICIPANTS
+import com.garam.whenwheremeet.domain.model.MIN_MEETING_PARTICIPANTS
 import com.garam.whenwheremeet.domain.model.MeetingStatus
 import com.garam.whenwheremeet.domain.model.Participant
 import com.garam.whenwheremeet.domain.model.ParticipantTravelPreference
@@ -76,6 +78,13 @@ class LocalMeetingRepository(
         persist()
     }
 
+    fun importStartLocations(roomId: String, startLocations: List<UserStartLocation>) {
+        snapshot = snapshot.copy(
+            startLocations = snapshot.startLocations.filterNot { it.roomId == roomId } + startLocations,
+        )
+        persist()
+    }
+
     override fun getStartLocations(roomId: String): List<UserStartLocation> =
         snapshot.startLocations.filter { it.roomId == roomId }
 
@@ -92,6 +101,9 @@ class LocalMeetingRepository(
         snapshot.placeVotes.filter { it.roomId == roomId }
 
     override suspend fun createRoom(room: MeetingRoom, host: Participant) {
+        require(room.maxParticipants in MIN_MEETING_PARTICIPANTS..MAX_MEETING_PARTICIPANTS) {
+            "최대 인원은 2명에서 8명 사이여야 합니다."
+        }
         require(snapshot.rooms.none { it.id.equals(room.id, ignoreCase = true) }) { "이미 존재하는 방 코드입니다." }
         snapshot = snapshot.copy(
             rooms = snapshot.rooms + room,
@@ -184,7 +196,7 @@ class LocalMeetingRepository(
         persist()
     }
 
-    override fun saveStartLocation(location: UserStartLocation) {
+    override suspend fun saveStartLocation(location: UserStartLocation) {
         snapshot = snapshot.copy(
             startLocations = snapshot.startLocations.filterNot {
                 it.roomId == location.roomId && it.participantId == location.participantId
@@ -254,7 +266,7 @@ class LocalMeetingRepository(
         persist()
     }
 
-    override fun confirmPlace(roomId: String, place: PlaceCandidate) {
+    override suspend fun confirmPlace(roomId: String, place: PlaceCandidate) {
         val now = Clock.System.now()
         snapshot = snapshot.copy(rooms = snapshot.rooms.map { room ->
             if (room.id == roomId) room.copy(

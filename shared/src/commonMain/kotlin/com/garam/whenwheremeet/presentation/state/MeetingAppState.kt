@@ -9,11 +9,13 @@ import com.garam.whenwheremeet.domain.model.AreaRecommendation
 import com.garam.whenwheremeet.domain.model.DateAvailabilitySummary
 import com.garam.whenwheremeet.domain.model.LocationPrivacyLevel
 import com.garam.whenwheremeet.domain.model.LocationSearchResult
+import com.garam.whenwheremeet.domain.model.MAX_MEETING_PARTICIPANTS
 import com.garam.whenwheremeet.domain.model.MeetingRoom
 import com.garam.whenwheremeet.domain.model.MeetingEvent
 import com.garam.whenwheremeet.domain.model.MeetingEventPublisher
 import com.garam.whenwheremeet.domain.model.MeetingStatus
 import com.garam.whenwheremeet.domain.model.MeetingType
+import com.garam.whenwheremeet.domain.model.MIN_MEETING_PARTICIPANTS
 import com.garam.whenwheremeet.domain.model.NoOpMeetingEventPublisher
 import com.garam.whenwheremeet.domain.model.Participant
 import com.garam.whenwheremeet.domain.model.PlaceCandidate
@@ -25,6 +27,7 @@ import com.garam.whenwheremeet.domain.model.TransportMode
 import com.garam.whenwheremeet.domain.model.UserStartLocation
 import com.garam.whenwheremeet.domain.provider.LocationSearchProvider
 import com.garam.whenwheremeet.domain.provider.PlaceSearchProvider
+import com.garam.whenwheremeet.domain.provider.PlaceRecommendationProvider
 import com.garam.whenwheremeet.domain.repository.MeetingRepository
 import com.garam.whenwheremeet.domain.usecase.AggregateAvailabilityUseCase
 import com.garam.whenwheremeet.domain.usecase.BuildCalendarMonthUseCase
@@ -105,7 +108,6 @@ data class CreateRoomInput(
     val minParticipants: Int,
     val maxParticipants: Int,
     val responseDeadline: LocalDate?,
-    val hostIsRequired: Boolean,
 )
 
 class MeetingAppState(
@@ -117,6 +119,7 @@ class MeetingAppState(
     private val locationSearchProvider: LocationSearchProvider,
     private val recommendMeetingAreas: RecommendMeetingAreasUseCase,
     private val placeSearchProvider: PlaceSearchProvider,
+    private val placeRecommendationProvider: PlaceRecommendationProvider,
     private val scorePlaces: ScorePlaceCandidatesUseCase = ScorePlaceCandidatesUseCase(),
     private val sortPlacesByVotes: SortPlacesByVotesUseCase = SortPlacesByVotesUseCase(),
     private val buildConfirmedShareText: BuildConfirmedMeetingShareTextUseCase = BuildConfirmedMeetingShareTextUseCase(),
@@ -280,8 +283,8 @@ class MeetingAppState(
             emitMessage("시작일은 오늘 또는 이후 날짜로 선택해주세요.")
             return
         }
-        if (input.maxParticipants < 2) {
-            emitMessage("최대 인원은 2명 이상으로 설정해주세요.")
+        if (input.maxParticipants !in MIN_MEETING_PARTICIPANTS..MAX_MEETING_PARTICIPANTS) {
+            emitMessage("최대 인원은 2명에서 8명 사이로 설정해주세요.")
             return
         }
         val now = Clock.System.now()
@@ -295,10 +298,9 @@ class MeetingAppState(
             dateRangeStart = input.startDate,
             dateRangeEnd = input.endDate,
             minParticipants = input.minParticipants.coerceAtLeast(1),
-            maxParticipants = input.maxParticipants.coerceAtLeast(2),
+            maxParticipants = input.maxParticipants,
             responseDeadline = input.responseDeadline,
             hostParticipantId = hostId,
-            requiredParticipantIds = if (input.hostIsRequired) listOf(hostId) else emptyList(),
             status = MeetingStatus.COLLECTING_AVAILABILITY,
             createdAt = now,
             updatedAt = now,
@@ -308,7 +310,6 @@ class MeetingAppState(
             roomId = roomId,
             nickname = input.hostNickname.trim(),
             isHost = true,
-            isRequired = input.hostIsRequired,
             joinedAt = now,
         )
         runCatching { repository.createRoom(room, host) }
@@ -335,7 +336,6 @@ class MeetingAppState(
             roomId = room.id,
             nickname = nickname.trim(),
             isHost = false,
-            isRequired = false,
             joinedAt = Clock.System.now(),
         )
         runCatching { repository.joinRoom(participant) }
@@ -458,23 +458,28 @@ class MeetingAppState(
         emitMessage("현재 위치 샘플을 저장했습니다.")
     }
 
-    fun saveStartLocation(roomId: String, result: LocationSearchResult) {
+    suspend fun saveStartLocation(roomId: String, result: LocationSearchResult) {
         val participantId = repository.getCurrentParticipantId(roomId) ?: return
-        repository.saveStartLocation(
-            UserStartLocation(
-                participantId = participantId,
-                roomId = roomId,
-                label = result.label,
-                address = result.address,
-                latitude = result.point.latitude,
-                longitude = result.point.longitude,
-                privacyLevel = LocationPrivacyLevel.EXACT_PRIVATE,
-                updatedAt = Clock.System.now(),
-            ),
-        )
+        runCatching {
+            repository.saveStartLocation(
+                UserStartLocation(
+                    participantId = participantId,
+                    roomId = roomId,
+                    label = result.label,
+                    address = result.address,
+                    latitude = result.point.latitude,
+                    longitude = result.point.longitude,
+                privacyLevel = LocationPrivacyLevel.AREA_ONLY_VISIBLE,
+                    updatedAt = Clock.System.now(),
+                ),
+            )
+        }.onFailure {
+            emitMessage(it.meetingRepositoryErrorMessage("출발역을 저장하지 못했습니다."))
+            return
+        }
         locationSearchResults = emptyList()
         revision++
-        emitMessage("출발 위치를 저장했습니다.")
+        emitMessage("출발역을 저장했습니다.")
     }
 
     fun saveTransportMode(roomId: String, transportMode: TransportMode) {
@@ -528,34 +533,26 @@ class MeetingAppState(
 
     suspend fun searchPlaceCandidates(roomId: String) {
         val room = repository.getRoom(roomId) ?: return
-        val selectedAreaId = room.selectedAreaCandidateId
-        if (selectedAreaId == null) {
-            emitMessage("추천 지역을 먼저 선택해주세요.")
-            return
-        }
-        val selectedArea = repository.getAreaRecommendations(roomId)
-            .firstOrNull { it.candidate.id == selectedAreaId }
-        if (selectedArea == null) {
-            emitMessage("선택한 추천 지역 정보를 찾을 수 없습니다.")
+        val locations = repository.getStartLocations(roomId)
+        val participants = repository.getParticipants(roomId)
+        if (locations.size < participants.size) {
+            emitMessage("모든 참여자가 출발역을 입력한 뒤 추천받을 수 있습니다.")
             return
         }
         isSearchingPlaces = true
         try {
-            val places = placeSearchProvider.searchPlaces(
-                center = selectedArea.candidate.point,
+            val stationLabels = locations.map { it.label }.distinct()
+            val recommendations = placeRecommendationProvider.recommendPlaces(
+                roomTitle = room.title,
                 meetingType = room.meetingType,
-                radiusMeters = 1500,
-                limit = 10,
+                startStations = stationLabels,
+                limit = 5,
             )
-            val scored = scorePlaces(
-                places = places,
-                center = selectedArea.candidate.point,
-                meetingType = room.meetingType,
-                selectedAreaRecommendation = selectedArea,
-            )
-            repository.savePlaceCandidates(roomId, scored)
+            repository.savePlaceCandidates(roomId, recommendations)
             revision++
-            emitMessage("장소 후보를 찾았습니다.")
+            emitMessage("장소 후보를 추천받았습니다.")
+        } catch (error: Throwable) {
+            emitMessage(error.meetingRepositoryErrorMessage("장소 후보를 추천받지 못했습니다."))
         } finally {
             isSearchingPlaces = false
         }
@@ -567,7 +564,7 @@ class MeetingAppState(
         revision++
     }
 
-    fun confirmPlace(roomId: String, place: PlaceCandidate) {
+    suspend fun confirmPlace(roomId: String, place: PlaceCandidate) {
         val room = repository.getRoom(roomId) ?: return
         if (repository.getCurrentParticipantId(roomId) != room.hostParticipantId) {
             emitMessage("방장만 최종 장소를 확정할 수 있습니다.")
@@ -577,9 +574,12 @@ class MeetingAppState(
             emitMessage("현재 장소 후보에 포함되지 않은 장소입니다.")
             return
         }
-        repository.confirmPlace(roomId, place)
-        revision++
-        emitMessage("최종 약속 장소를 확정했습니다.")
+        runCatching { repository.confirmPlace(roomId, place) }
+            .onSuccess {
+                revision++
+                emitMessage("최종 약속 장소를 확정했습니다.")
+            }
+            .onFailure { emitMessage(it.meetingRepositoryErrorMessage("최종 장소를 확정하지 못했습니다.")) }
     }
 
     fun openMap(place: PlaceCandidate) {
@@ -706,6 +706,8 @@ private fun Throwable.meetingRepositoryErrorMessage(fallback: String): String {
             "Firestore 데이터베이스를 찾지 못했어요. Firebase 프로젝트와 데이터베이스 ID 설정을 확인해주세요."
         rawMessage.contains("PERMISSION_DENIED", ignoreCase = true) ->
             "Firestore 접근 권한이 없어요. 로그인 상태와 Firestore 보안 규칙을 확인해주세요."
+        rawMessage.contains("timeout", ignoreCase = true) ->
+            "추천 응답이 지연되고 있어요. 잠시 후 다시 시도해주세요."
         rawMessage.isNotBlank() -> rawMessage
         else -> fallback
     }

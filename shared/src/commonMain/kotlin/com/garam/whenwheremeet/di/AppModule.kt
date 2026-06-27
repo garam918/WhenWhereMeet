@@ -5,10 +5,12 @@ import com.garam.whenwheremeet.data.local.KeyValueStorage
 import com.garam.whenwheremeet.data.local.platformKeyValueStorage
 import com.garam.whenwheremeet.data.provider.FakeLocationSearchProvider
 import com.garam.whenwheremeet.data.provider.FakePlaceSearchProvider
+import com.garam.whenwheremeet.data.provider.GeminiPlaceRecommendationProvider
 import com.garam.whenwheremeet.data.provider.MetropolitanMeetingAreaCandidateProvider
 import com.garam.whenwheremeet.data.provider.StaticMetropolitanTransitTimeProvider
 import com.garam.whenwheremeet.data.repository.LocalMeetingRepository
 import com.garam.whenwheremeet.domain.provider.LocationSearchProvider
+import com.garam.whenwheremeet.domain.provider.PlaceRecommendationProvider
 import com.garam.whenwheremeet.domain.provider.PlaceSearchProvider
 import com.garam.whenwheremeet.domain.provider.TravelTimeProvider
 import com.garam.whenwheremeet.domain.repository.MeetingRepository
@@ -25,6 +27,7 @@ val appModule = module {
     single<TravelTimeProvider> { StaticMetropolitanTransitTimeProvider() }
     single { RecommendMeetingAreasUseCase(get()) }
     single<PlaceSearchProvider> { FakePlaceSearchProvider() }
+    single<PlaceRecommendationProvider> { GeminiPlaceRecommendationProvider() }
     single { MetropolitanMeetingAreaCandidateProvider() }
 
     factory {
@@ -33,6 +36,7 @@ val appModule = module {
             locationSearchProvider = get(),
             recommendMeetingAreas = get(),
             placeSearchProvider = get(),
+            placeRecommendationProvider = get(),
         )
     }
 }

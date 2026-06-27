@@ -114,7 +114,6 @@ class HomeDashboardUseCasesTest {
         roomId = "room",
         nickname = id,
         isHost = true,
-        isRequired = false,
         joinedAt = now,
     )
 

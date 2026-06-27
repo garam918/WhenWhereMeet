@@ -10,15 +10,13 @@ import kotlinx.datetime.LocalDate
 import kotlin.time.Instant
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
 import kotlin.test.assertNull
-import kotlin.test.assertTrue
 
 class AvailabilityUseCasesTest {
     private val date1 = LocalDate(2026, 6, 20)
     private val date2 = LocalDate(2026, 6, 21)
     private val instant = Instant.parse("2026-06-01T00:00:00Z")
-    private val host = participant("host", isHost = true, isRequired = true)
+    private val host = participant("host", isHost = true)
     private val guest = participant("guest")
     private val room = MeetingRoom(
         id = "ABC123",
@@ -28,7 +26,6 @@ class AvailabilityUseCasesTest {
         dateRangeEnd = date2,
         minParticipants = 2,
         hostParticipantId = host.id,
-        requiredParticipantIds = listOf(host.id),
         status = MeetingStatus.COLLECTING_AVAILABILITY,
         createdAt = instant,
         updatedAt = instant,
@@ -65,21 +62,6 @@ class AvailabilityUseCasesTest {
     }
 
     @Test
-    fun requiredParticipantMustBeAvailable() {
-        val summaries = AggregateAvailabilityUseCase()(
-            room,
-            listOf(host, guest),
-            listOf(
-                availability(host, date1, AvailabilityStatus.MAYBE),
-                availability(host, date2, AvailabilityStatus.AVAILABLE),
-            ),
-        )
-
-        assertFalse(summaries.first { it.date == date1 }.allRequiredAvailable)
-        assertTrue(summaries.first { it.date == date2 }.allRequiredAvailable)
-    }
-
-    @Test
     fun recommendationUsesScoreThenAvailableCount() {
         val recommendations = RecommendDatesUseCase()(
             room,
@@ -97,12 +79,11 @@ class AvailabilityUseCasesTest {
         assertEquals(1, recommendations.first().rank)
     }
 
-    private fun participant(id: String, isHost: Boolean = false, isRequired: Boolean = false) = Participant(
+    private fun participant(id: String, isHost: Boolean = false) = Participant(
         id = id,
         roomId = "ABC123",
         nickname = id,
         isHost = isHost,
-        isRequired = isRequired,
         joinedAt = instant,
     )
 

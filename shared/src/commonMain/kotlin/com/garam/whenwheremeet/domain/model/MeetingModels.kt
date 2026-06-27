@@ -4,6 +4,9 @@ import kotlinx.datetime.LocalDate
 import kotlinx.serialization.Serializable
 import kotlin.time.Instant
 
+const val MIN_MEETING_PARTICIPANTS = 2
+const val MAX_MEETING_PARTICIPANTS = 8
+
 @Serializable
 data class MeetingRoom(
     val id: String,
@@ -16,7 +19,6 @@ data class MeetingRoom(
     val maxParticipants: Int = minParticipants,
     val responseDeadline: LocalDate? = null,
     val hostParticipantId: String,
-    val requiredParticipantIds: List<String> = emptyList(),
     val status: MeetingStatus,
     val confirmedDate: LocalDate? = null,
     val selectedAreaCandidateId: String? = null,
@@ -31,7 +33,6 @@ data class Participant(
     val roomId: String,
     val nickname: String,
     val isHost: Boolean,
-    val isRequired: Boolean,
     val joinedAt: Instant,
 )
 
@@ -78,7 +79,6 @@ data class DateAvailabilitySummary(
     val unavailableParticipants: List<Participant>,
     val unansweredParticipants: List<Participant>,
     val score: Int,
-    val allRequiredAvailable: Boolean,
 ) {
     val totalParticipants: Int = availableParticipants.size + maybeParticipants.size +
         unavailableParticipants.size + unansweredParticipants.size

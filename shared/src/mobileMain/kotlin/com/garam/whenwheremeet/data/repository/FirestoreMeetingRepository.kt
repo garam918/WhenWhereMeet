@@ -60,6 +60,7 @@ class FirestoreMeetingRepository(
         if (!roomSnapshot.exists) return null
         val room = roomSnapshot.data<FirestoreMeetingRoom>().toDomain()
         local.importRoom(room, loadParticipants(room.id), local.getCurrentParticipantId(room.id))
+        local.importStartLocations(room.id, loadStartLocations(room.id))
         return room
     }
 
@@ -80,6 +81,7 @@ class FirestoreMeetingRepository(
             currentParticipantId = local.getCurrentParticipantId(remoteRoom.id),
         )
         local.importAvailabilities(remoteRoom.id, loadAvailabilities(remoteRoom.id))
+        local.importStartLocations(remoteRoom.id, loadStartLocations(remoteRoom.id))
     }
 
     override fun observeRoom(roomId: String): Flow<Unit> {
@@ -106,12 +108,19 @@ class FirestoreMeetingRepository(
                     snapshot.documents.map { it.data<FirestoreAvailability>().toDomain() },
                 )
             },
+            roomRef.collection(START_LOCATIONS).snapshots.map { snapshot ->
+                local.importStartLocations(
+                    firestoreRoomId,
+                    snapshot.documents.map { it.data<FirestoreStartLocation>().toDomain() },
+                )
+            },
         )
     }
 
     override suspend fun createRoom(room: MeetingRoom, host: Participant) {
         val code = room.id.normalizedRoomCode()
-        val roomToStore = room.copy(id = code, maxParticipants = room.maxParticipants.coerceAtLeast(2))
+        require(room.maxParticipants in 2..8) { "최대 인원은 2명에서 8명 사이여야 합니다." }
+        val roomToStore = room.copy(id = code)
         val hostToStore = host.copy(roomId = code)
         val hostAuthUid = currentAuthUid()
         firestore.runTransaction {
@@ -167,7 +176,6 @@ class FirestoreMeetingRepository(
                 roomRef,
                 current.copy(
                     participantCount = (current.participantCount - 1).coerceAtLeast(1),
-                    requiredParticipantIds = current.requiredParticipantIds - participantId,
                     updatedAt = now.toKoreaIsoString(),
                 ),
             )
@@ -188,6 +196,9 @@ class FirestoreMeetingRepository(
         }
         loadAvailabilities(room.id).forEach {
             batch.delete(availabilityDocument(room.id, it.participantId, it.date))
+        }
+        loadStartLocations(room.id).forEach {
+            batch.delete(rooms.document(room.id).collection(START_LOCATIONS).document(it.participantId))
         }
         batch.delete(roomCodes.document(room.id.normalizedRoomCode()))
         batch.delete(rooms.document(room.id))
@@ -231,13 +242,33 @@ class FirestoreMeetingRepository(
         )
         local.confirmDate(room.id, date)
     }
-    override fun saveStartLocation(location: UserStartLocation) = local.saveStartLocation(location)
+    override suspend fun saveStartLocation(location: UserStartLocation) {
+        val room = getRoom(location.roomId) ?: throw IllegalArgumentException("방 정보를 찾을 수 없습니다.")
+        rooms.document(room.id).collection(START_LOCATIONS).document(location.participantId).set(FirestoreStartLocation.from(location))
+        local.saveStartLocation(location)
+    }
     override fun saveTransportMode(roomId: String, participantId: String, transportMode: TransportMode) = local.saveTransportMode(roomId, participantId, transportMode)
     override fun saveAreaRecommendations(roomId: String, recommendations: List<AreaRecommendation>) = local.saveAreaRecommendations(roomId, recommendations)
     override fun selectAreaCandidate(roomId: String, candidateId: String) = local.selectAreaCandidate(roomId, candidateId)
     override fun savePlaceCandidates(roomId: String, candidates: List<ScoredPlaceCandidate>) = local.savePlaceCandidates(roomId, candidates)
     override fun savePlaceVote(roomId: String, placeId: String, participantId: String, voteType: PlaceVoteType) = local.savePlaceVote(roomId, placeId, participantId, voteType)
-    override fun confirmPlace(roomId: String, place: PlaceCandidate) = local.confirmPlace(roomId, place)
+    override suspend fun confirmPlace(roomId: String, place: PlaceCandidate) {
+        val room = getRoom(roomId) ?: throw IllegalArgumentException("방 정보를 찾을 수 없습니다.")
+        val previous = rooms.document(room.id).get().data<FirestoreMeetingRoom>()
+        val updated = room.copy(
+            status = MeetingStatus.PLACE_CONFIRMED,
+            confirmedPlace = place,
+            updatedAt = kotlin.time.Clock.System.now(),
+        )
+        rooms.document(room.id).set(
+            FirestoreMeetingRoom.from(
+                room = updated,
+                participantCount = loadParticipants(room.id).size,
+                hostAuthUid = previous.hostAuthUid,
+            ),
+        )
+        local.confirmPlace(room.id, place)
+    }
 
     private suspend fun loadParticipants(roomId: String): List<Participant> =
         rooms.document(roomId).collection(PARTICIPANTS).get().documents.map { it.data<FirestoreParticipant>().toDomain() }
@@ -245,14 +276,17 @@ class FirestoreMeetingRepository(
     private suspend fun loadAvailabilities(roomId: String): List<Availability> =
         rooms.document(roomId).collection(AVAILABILITIES).get().documents.map { it.data<FirestoreAvailability>().toDomain() }
 
+    private suspend fun loadStartLocations(roomId: String): List<UserStartLocation> =
+        rooms.document(roomId).collection(START_LOCATIONS).get().documents.map { it.data<FirestoreStartLocation>().toDomain() }
+
     private fun availabilityDocument(roomId: String, participantId: String, date: LocalDate) =
         rooms.document(roomId).collection(AVAILABILITIES).document("$participantId-${date}")
 
     private fun mergeRemoteRoom(remoteRoom: MeetingRoom): MeetingRoom {
         val localRoom = local.getRoom(remoteRoom.id) ?: return remoteRoom
         return remoteRoom.copy(
-            selectedAreaCandidateId = localRoom.selectedAreaCandidateId,
-            confirmedPlace = localRoom.confirmedPlace,
+            selectedAreaCandidateId = localRoom.selectedAreaCandidateId ?: remoteRoom.selectedAreaCandidateId,
+            confirmedPlace = localRoom.confirmedPlace ?: remoteRoom.confirmedPlace,
         )
     }
 
@@ -289,6 +323,7 @@ class FirestoreMeetingRepository(
         const val ROOM_CODES = "roomCodes"
         const val PARTICIPANTS = "participants"
         const val AVAILABILITIES = "availabilities"
+        const val START_LOCATIONS = "startLocations"
         const val NICKNAMES = "nicknameKeys"
     }
 }
@@ -307,9 +342,9 @@ private data class FirestoreMeetingRoom(
     val responseDeadline: String? = null,
     val hostParticipantId: String = "",
     val hostAuthUid: String? = null,
-    val requiredParticipantIds: List<String> = emptyList(),
     val status: String = MeetingStatus.COLLECTING_AVAILABILITY.name,
     val confirmedDate: String? = null,
+    val confirmedPlace: FirestorePlaceCandidate? = null,
     val createdAt: String = "",
     val updatedAt: String = "",
 ) {
@@ -324,9 +359,9 @@ private data class FirestoreMeetingRoom(
         maxParticipants = maxParticipants,
         responseDeadline = responseDeadline?.let(LocalDate::parse),
         hostParticipantId = hostParticipantId,
-        requiredParticipantIds = requiredParticipantIds,
         status = enumValueOf(status),
         confirmedDate = confirmedDate?.let(LocalDate::parse),
+        confirmedPlace = confirmedPlace?.toDomain(),
         createdAt = createdAt.parseFirestoreInstant(),
         updatedAt = updatedAt.parseFirestoreInstant(),
     )
@@ -349,11 +384,62 @@ private data class FirestoreMeetingRoom(
             responseDeadline = room.responseDeadline?.toString(),
             hostParticipantId = room.hostParticipantId,
             hostAuthUid = hostAuthUid,
-            requiredParticipantIds = room.requiredParticipantIds,
             status = room.status.name,
             confirmedDate = room.confirmedDate?.toString(),
+            confirmedPlace = room.confirmedPlace?.let(FirestorePlaceCandidate::from),
             createdAt = room.createdAt.toKoreaIsoString(),
             updatedAt = room.updatedAt.toKoreaIsoString(),
+        )
+    }
+}
+
+@Serializable
+private data class FirestorePlaceCandidate(
+    val id: String = "",
+    val name: String = "",
+    val category: String = "ETC",
+    val address: String? = null,
+    val roadAddress: String? = null,
+    val latitude: Double = 0.0,
+    val longitude: Double = 0.0,
+    val phoneNumber: String? = null,
+    val rating: Double? = null,
+    val reviewCount: Int? = null,
+    val openingHoursSummary: String? = null,
+    val mapUrl: String? = null,
+    val source: String = "CUSTOM",
+) {
+    fun toDomain(): PlaceCandidate = PlaceCandidate(
+        id = id,
+        name = name,
+        category = enumValueOf(category),
+        address = address,
+        roadAddress = roadAddress,
+        latitude = latitude,
+        longitude = longitude,
+        phoneNumber = phoneNumber,
+        rating = rating,
+        reviewCount = reviewCount,
+        openingHoursSummary = openingHoursSummary,
+        mapUrl = mapUrl,
+        source = enumValueOf(source),
+    )
+
+    companion object {
+        fun from(place: PlaceCandidate) = FirestorePlaceCandidate(
+            id = place.id,
+            name = place.name,
+            category = place.category.name,
+            address = place.address,
+            roadAddress = place.roadAddress,
+            latitude = place.latitude,
+            longitude = place.longitude,
+            phoneNumber = place.phoneNumber,
+            rating = place.rating,
+            reviewCount = place.reviewCount,
+            openingHoursSummary = place.openingHoursSummary,
+            mapUrl = place.mapUrl,
+            source = place.source.name,
         )
     }
 }
@@ -364,11 +450,10 @@ private data class FirestoreParticipant(
     val roomId: String = "",
     val nickname: String = "",
     val isHost: Boolean = false,
-    val isRequired: Boolean = false,
     val authUid: String? = null,
     val joinedAt: String = "",
 ) {
-    fun toDomain(): Participant = Participant(id, roomId, nickname, isHost, isRequired, joinedAt.parseFirestoreInstant())
+    fun toDomain(): Participant = Participant(id, roomId, nickname, isHost, joinedAt.parseFirestoreInstant())
 
     companion object {
         fun from(participant: Participant, authUid: String) = FirestoreParticipant(
@@ -376,7 +461,6 @@ private data class FirestoreParticipant(
             roomId = participant.roomId,
             nickname = participant.nickname,
             isHost = participant.isHost,
-            isRequired = participant.isRequired,
             authUid = authUid,
             joinedAt = participant.joinedAt.toKoreaIsoString(),
         )
@@ -406,6 +490,42 @@ private data class FirestoreAvailability(
             date = availability.date.toString(),
             status = availability.status.name,
             updatedAt = availability.updatedAt.toKoreaIsoString(),
+        )
+    }
+}
+
+@Serializable
+private data class FirestoreStartLocation(
+    val participantId: String = "",
+    val roomId: String = "",
+    val label: String = "",
+    val address: String? = null,
+    val latitude: Double = 0.0,
+    val longitude: Double = 0.0,
+    val privacyLevel: String = "AREA_ONLY_VISIBLE",
+    val updatedAt: String = "",
+) {
+    fun toDomain(): UserStartLocation = UserStartLocation(
+        participantId = participantId,
+        roomId = roomId,
+        label = label,
+        address = address,
+        latitude = latitude,
+        longitude = longitude,
+        privacyLevel = enumValueOf(privacyLevel),
+        updatedAt = updatedAt.parseFirestoreInstant(),
+    )
+
+    companion object {
+        fun from(location: UserStartLocation) = FirestoreStartLocation(
+            participantId = location.participantId,
+            roomId = location.roomId,
+            label = location.label,
+            address = location.address,
+            latitude = location.latitude,
+            longitude = location.longitude,
+            privacyLevel = location.privacyLevel.name,
+            updatedAt = location.updatedAt.toKoreaIsoString(),
         )
     }
 }

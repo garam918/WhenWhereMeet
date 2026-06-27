@@ -72,6 +72,7 @@ class WebFirestoreMeetingRepository(
         val room = roomDoc.fields().toMeetingRoom()
         local.importRoom(room, loadParticipants(room.id), local.getCurrentParticipantId(room.id))
         local.importAvailabilities(room.id, loadAvailabilities(room.id))
+        local.importStartLocations(room.id, loadStartLocations(room.id))
         return room
     }
 
@@ -90,6 +91,7 @@ class WebFirestoreMeetingRepository(
             currentParticipantId = local.getCurrentParticipantId(remoteRoom.id),
         )
         local.importAvailabilities(remoteRoom.id, loadAvailabilities(remoteRoom.id))
+        local.importStartLocations(remoteRoom.id, loadStartLocations(remoteRoom.id))
     }
 
     override fun observeRoom(roomId: String): Flow<Unit> = flow {
@@ -102,7 +104,8 @@ class WebFirestoreMeetingRepository(
 
     override suspend fun createRoom(room: MeetingRoom, host: Participant) {
         val code = room.id.normalizedRoomCode()
-        val roomToStore = room.copy(id = code, maxParticipants = room.maxParticipants.coerceAtLeast(2))
+        require(room.maxParticipants in 2..8) { "최대 인원은 2명에서 8명 사이여야 합니다." }
+        val roomToStore = room.copy(id = code)
         val hostToStore = host.copy(roomId = code)
         val authUid = currentAuthUid()
         commit(
@@ -151,10 +154,7 @@ class WebFirestoreMeetingRepository(
         val currentRoomDoc = requireNotNull(getDocument("meetingRooms/${room.id}")) { "방 정보를 찾을 수 없습니다." }
         val current = currentRoomDoc.fields()
         val participantCount = (current.intField("participantCount") - 1).coerceAtLeast(1)
-        val updated = room.copy(
-            requiredParticipantIds = room.requiredParticipantIds - participantId,
-            updatedAt = Clock.System.now(),
-        )
+        val updated = room.copy(updatedAt = Clock.System.now())
         val writes = mutableListOf<JsonObject>()
         writes += updateWrite(
             "meetingRooms/${room.id}",
@@ -181,6 +181,9 @@ class WebFirestoreMeetingRepository(
         }
         availabilities.forEach {
             writes += deleteWrite("meetingRooms/${room.id}/availabilities/${it.participantId}-${it.date}")
+        }
+        loadStartLocations(room.id).forEach {
+            writes += deleteWrite("meetingRooms/${room.id}/startLocations/${it.participantId}")
         }
         writes += deleteWrite("roomCodes/${room.id.normalizedRoomCode()}")
         writes += deleteWrite("meetingRooms/${room.id}")
@@ -231,19 +234,51 @@ class WebFirestoreMeetingRepository(
         local.confirmDate(room.id, date)
     }
 
-    override fun saveStartLocation(location: UserStartLocation) = local.saveStartLocation(location)
+    override suspend fun saveStartLocation(location: UserStartLocation) {
+        val room = getRoom(location.roomId) ?: throw IllegalArgumentException("방 정보를 찾을 수 없습니다.")
+        commit(
+            updateWrite(
+                "meetingRooms/${room.id}/startLocations/${location.participantId}",
+                location.toFirestoreFields(),
+                exists = null,
+            ),
+        )
+        local.saveStartLocation(location.copy(roomId = room.id))
+    }
     override fun saveTransportMode(roomId: String, participantId: String, transportMode: TransportMode) = local.saveTransportMode(roomId, participantId, transportMode)
     override fun saveAreaRecommendations(roomId: String, recommendations: List<AreaRecommendation>) = local.saveAreaRecommendations(roomId, recommendations)
     override fun selectAreaCandidate(roomId: String, candidateId: String) = local.selectAreaCandidate(roomId, candidateId)
     override fun savePlaceCandidates(roomId: String, candidates: List<ScoredPlaceCandidate>) = local.savePlaceCandidates(roomId, candidates)
     override fun savePlaceVote(roomId: String, placeId: String, participantId: String, voteType: PlaceVoteType) = local.savePlaceVote(roomId, placeId, participantId, voteType)
-    override fun confirmPlace(roomId: String, place: PlaceCandidate) = local.confirmPlace(roomId, place)
+    override suspend fun confirmPlace(roomId: String, place: PlaceCandidate) {
+        val room = getRoom(roomId) ?: throw IllegalArgumentException("방 정보를 찾을 수 없습니다.")
+        val roomDoc = requireNotNull(getDocument("meetingRooms/${room.id}")) { "방 정보를 찾을 수 없습니다." }
+        val updated = room.copy(
+            status = MeetingStatus.PLACE_CONFIRMED,
+            confirmedPlace = place,
+            updatedAt = Clock.System.now(),
+        )
+        commit(
+            updateWrite(
+                "meetingRooms/${room.id}",
+                updated.toFirestoreFields(
+                    participantCount = loadParticipants(room.id).size,
+                    hostAuthUid = roomDoc.fields().optionalStringField("hostAuthUid"),
+                ),
+                exists = true,
+            ),
+        )
+        local.confirmPlace(room.id, place)
+    }
 
     private suspend fun loadParticipants(roomId: String): List<Participant> =
         listDocuments("meetingRooms/$roomId/participants").map { it.fields().toParticipant() }
 
     private suspend fun loadAvailabilities(roomId: String): List<Availability> =
         listDocuments("meetingRooms/$roomId/availabilities").map { it.fields().toAvailability() }
+
+    private suspend fun loadStartLocations(roomId: String): List<UserStartLocation> =
+        listDocuments("meetingRooms/$roomId/startLocations").map { it.fields().toStartLocation() }
 
     private suspend fun getDocument(path: String): JsonObject? {
         val response = fetch(documentUrl(path), jsonRequest(RequestMethod.GET, bearerToken = currentIdToken()))
@@ -306,8 +341,8 @@ class WebFirestoreMeetingRepository(
     private fun mergeRemoteRoom(remoteRoom: MeetingRoom): MeetingRoom {
         val localRoom = local.getRoom(remoteRoom.id) ?: return remoteRoom
         return remoteRoom.copy(
-            selectedAreaCandidateId = localRoom.selectedAreaCandidateId,
-            confirmedPlace = localRoom.confirmedPlace,
+            selectedAreaCandidateId = localRoom.selectedAreaCandidateId ?: remoteRoom.selectedAreaCandidateId,
+            confirmedPlace = localRoom.confirmedPlace ?: remoteRoom.confirmedPlace,
         )
     }
 
@@ -337,9 +372,9 @@ private fun MeetingRoom.toFirestoreFields(participantCount: Int, hostAuthUid: St
     responseDeadline?.let { put("responseDeadline", stringValue(it.toString())) }
     put("hostParticipantId", stringValue(hostParticipantId))
     hostAuthUid?.let { put("hostAuthUid", stringValue(it)) }
-    put("requiredParticipantIds", arrayValue(requiredParticipantIds.map(::stringValue)))
     put("status", stringValue(status.name))
     confirmedDate?.let { put("confirmedDate", stringValue(it.toString())) }
+    confirmedPlace?.let { put("confirmedPlace", placeCandidateValue(it)) }
     put("createdAt", stringValue(createdAt.toKoreaIsoString()))
     put("updatedAt", stringValue(updatedAt.toKoreaIsoString()))
 }
@@ -349,7 +384,6 @@ private fun Participant.toFirestoreFields(authUid: String): JsonObject = buildJs
     put("roomId", stringValue(roomId))
     put("nickname", stringValue(nickname))
     put("isHost", booleanValue(isHost))
-    put("isRequired", booleanValue(isRequired))
     put("authUid", stringValue(authUid))
     put("joinedAt", stringValue(joinedAt.toKoreaIsoString()))
 }
@@ -359,6 +393,37 @@ private fun Availability.toFirestoreFields(): JsonObject = buildJsonObject {
     put("participantId", stringValue(participantId))
     put("date", stringValue(date.toString()))
     put("status", stringValue(status.name))
+    put("updatedAt", stringValue(updatedAt.toKoreaIsoString()))
+}
+
+private fun placeCandidateValue(place: PlaceCandidate): JsonObject = buildJsonObject {
+    put("mapValue", buildJsonObject {
+        put("fields", buildJsonObject {
+            put("id", stringValue(place.id))
+            put("name", stringValue(place.name))
+            put("category", stringValue(place.category.name))
+            place.address?.let { put("address", stringValue(it)) }
+            place.roadAddress?.let { put("roadAddress", stringValue(it)) }
+            put("latitude", doubleValue(place.latitude))
+            put("longitude", doubleValue(place.longitude))
+            place.phoneNumber?.let { put("phoneNumber", stringValue(it)) }
+            place.rating?.let { put("rating", doubleValue(it)) }
+            place.reviewCount?.let { put("reviewCount", integerValue(it)) }
+            place.openingHoursSummary?.let { put("openingHoursSummary", stringValue(it)) }
+            place.mapUrl?.let { put("mapUrl", stringValue(it)) }
+            put("source", stringValue(place.source.name))
+        })
+    })
+}
+
+private fun UserStartLocation.toFirestoreFields(): JsonObject = buildJsonObject {
+    put("participantId", stringValue(participantId))
+    put("roomId", stringValue(roomId))
+    put("label", stringValue(label))
+    address?.let { put("address", stringValue(it)) }
+    put("latitude", doubleValue(latitude))
+    put("longitude", doubleValue(longitude))
+    put("privacyLevel", stringValue(privacyLevel.name))
     put("updatedAt", stringValue(updatedAt.toKoreaIsoString()))
 }
 
@@ -383,9 +448,9 @@ private fun JsonObject.toMeetingRoom(): MeetingRoom = MeetingRoom(
     maxParticipants = intField("maxParticipants"),
     responseDeadline = optionalStringField("responseDeadline")?.let(LocalDate::parse),
     hostParticipantId = stringField("hostParticipantId"),
-    requiredParticipantIds = stringArrayField("requiredParticipantIds"),
     status = enumValueOf(optionalStringField("status") ?: MeetingStatus.COLLECTING_AVAILABILITY.name),
     confirmedDate = optionalStringField("confirmedDate")?.let(LocalDate::parse),
+    confirmedPlace = this["confirmedPlace"]?.jsonObject?.get("mapValue")?.jsonObject?.get("fields")?.jsonObject?.toPlaceCandidate(),
     createdAt = stringField("createdAt").parseFirestoreInstant(),
     updatedAt = stringField("updatedAt").parseFirestoreInstant(),
 )
@@ -395,7 +460,6 @@ private fun JsonObject.toParticipant(): Participant = Participant(
     roomId = stringField("roomId"),
     nickname = stringField("nickname"),
     isHost = boolField("isHost"),
-    isRequired = boolField("isRequired"),
     joinedAt = stringField("joinedAt").parseFirestoreInstant(),
 )
 
@@ -405,6 +469,33 @@ private fun JsonObject.toAvailability(): Availability = Availability(
     date = LocalDate.parse(stringField("date")),
     status = enumValueOf(stringField("status")),
     updatedAt = stringField("updatedAt").parseFirestoreInstant(),
+)
+
+private fun JsonObject.toStartLocation(): UserStartLocation = UserStartLocation(
+    participantId = stringField("participantId"),
+    roomId = stringField("roomId"),
+    label = stringField("label"),
+    address = optionalStringField("address"),
+    latitude = doubleField("latitude"),
+    longitude = doubleField("longitude"),
+    privacyLevel = enumValueOf(optionalStringField("privacyLevel") ?: "AREA_ONLY_VISIBLE"),
+    updatedAt = stringField("updatedAt").parseFirestoreInstant(),
+)
+
+private fun JsonObject.toPlaceCandidate(): PlaceCandidate = PlaceCandidate(
+    id = stringField("id"),
+    name = stringField("name"),
+    category = enumValueOf(optionalStringField("category") ?: "ETC"),
+    address = optionalStringField("address"),
+    roadAddress = optionalStringField("roadAddress"),
+    latitude = doubleField("latitude"),
+    longitude = doubleField("longitude"),
+    phoneNumber = optionalStringField("phoneNumber"),
+    rating = optionalDoubleField("rating"),
+    reviewCount = optionalIntField("reviewCount"),
+    openingHoursSummary = optionalStringField("openingHoursSummary"),
+    mapUrl = optionalStringField("mapUrl"),
+    source = enumValueOf(optionalStringField("source") ?: "CUSTOM"),
 )
 
 private fun JsonObject.fields(): JsonObject = this["fields"]?.jsonObject ?: JsonObject(emptyMap())
@@ -422,8 +513,21 @@ private fun JsonObject.intField(key: String): Int {
         ?: 0
 }
 
+private fun JsonObject.optionalIntField(key: String): Int? =
+    if (containsKey(key)) intField(key) else null
+
 private fun JsonObject.boolField(key: String): Boolean =
     this[key]?.jsonObject?.get("booleanValue")?.jsonPrimitive?.content == "true"
+
+private fun JsonObject.doubleField(key: String): Double {
+    val field = this[key]?.jsonObject ?: return 0.0
+    return field["doubleValue"]?.jsonPrimitive?.content?.toDoubleOrNull()
+        ?: field["integerValue"]?.jsonPrimitive?.content?.toDoubleOrNull()
+        ?: 0.0
+}
+
+private fun JsonObject.optionalDoubleField(key: String): Double? =
+    if (containsKey(key)) doubleField(key) else null
 
 private fun JsonObject.stringArrayField(key: String): List<String> =
     this[key]?.jsonObject
@@ -434,6 +538,7 @@ private fun JsonObject.stringArrayField(key: String): List<String> =
 
 private fun stringValue(value: String): JsonObject = buildJsonObject { put("stringValue", value) }
 private fun integerValue(value: Int): JsonObject = buildJsonObject { put("integerValue", value.toString()) }
+private fun doubleValue(value: Double): JsonObject = buildJsonObject { put("doubleValue", value) }
 private fun booleanValue(value: Boolean): JsonObject = buildJsonObject { put("booleanValue", value) }
 private fun arrayValue(values: List<JsonElement>): JsonObject = buildJsonObject {
     put("arrayValue", buildJsonObject { put("values", buildJsonArray { values.forEach { add(it) } }) })

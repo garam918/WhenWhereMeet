@@ -1,6 +1,7 @@
 package com.garam.whenwheremeet
 
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -13,6 +14,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalFocusManager
 import com.garam.whenwheremeet.data.provider.MetropolitanMeetingAreaCandidateProvider
 import com.garam.whenwheremeet.data.local.KeyValueStorage
 import com.garam.whenwheremeet.di.appModule
@@ -73,6 +76,7 @@ private fun AppContent() {
     val authPlatform = rememberAuthPlatform()
     val externalUrlLauncher = rememberExternalUrlLauncher()
     val event = appState.event
+    val focusManager = LocalFocusManager.current
 
     LaunchedEffect(Unit) {
         initialRoomCodeFromLaunch()?.let { roomCode ->
@@ -117,6 +121,9 @@ private fun AppContent() {
 
     WwmTheme {
         Scaffold(
+            modifier = Modifier.pointerInput(Unit) {
+                detectTapGestures(onTap = { focusManager.clearFocus() })
+            },
             containerColor = MaterialTheme.colorScheme.background,
             snackbarHost = { SnackbarHost(snackbarHostState) },
         ) { padding ->
@@ -268,7 +275,7 @@ private fun AppContent() {
                             onShare = { appState.requestShare(route.roomId) },
                             onSearchLocations = { query -> coroutineScope.launch { appState.searchLocations(query) } },
                             onUseCurrentLocation = { coroutineScope.launch { appState.useCurrentLocation(route.roomId) } },
-                            onSaveStartLocation = { appState.saveStartLocation(route.roomId, it) },
+                            onSaveStartLocation = { coroutineScope.launch { appState.saveStartLocation(route.roomId, it) } },
                             onSaveTransportMode = { appState.saveTransportMode(route.roomId, it) },
                             onCalculateAreas = {
                                 coroutineScope.launch {
@@ -281,7 +288,7 @@ private fun AppContent() {
                             onSelectArea = { appState.selectAreaCandidate(route.roomId, it) },
                             onSearchPlaces = { coroutineScope.launch { appState.searchPlaceCandidates(route.roomId) } },
                             onVotePlace = { placeId, vote -> appState.votePlace(route.roomId, placeId, vote) },
-                            onConfirmPlace = { appState.confirmPlace(route.roomId, it) },
+                            onConfirmPlace = { coroutineScope.launch { appState.confirmPlace(route.roomId, it) } },
                             onOpenMap = appState::openMap,
                             onLeaveRoom = { coroutineScope.launch { appState.leaveRoom(route.roomId) } },
                             onDeleteRoom = { coroutineScope.launch { appState.deleteRoom(route.roomId) } },

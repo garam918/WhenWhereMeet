@@ -36,7 +36,7 @@ interface MeetingRepository {
     fun getStartLocations(roomId: String): List<UserStartLocation>
     fun getTravelPreferences(roomId: String): List<ParticipantTravelPreference>
     fun getAreaRecommendations(roomId: String): List<AreaRecommendation>
-    fun saveStartLocation(location: UserStartLocation)
+    suspend fun saveStartLocation(location: UserStartLocation)
     fun saveTransportMode(roomId: String, participantId: String, transportMode: TransportMode)
     fun saveAreaRecommendations(roomId: String, recommendations: List<AreaRecommendation>)
     fun selectAreaCandidate(roomId: String, candidateId: String)
@@ -44,5 +44,5 @@ interface MeetingRepository {
     fun getPlaceVotes(roomId: String): List<PlaceVote>
     fun savePlaceCandidates(roomId: String, candidates: List<ScoredPlaceCandidate>)
     fun savePlaceVote(roomId: String, placeId: String, participantId: String, voteType: PlaceVoteType)
-    fun confirmPlace(roomId: String, place: PlaceCandidate)
+    suspend fun confirmPlace(roomId: String, place: PlaceCandidate)
 }
