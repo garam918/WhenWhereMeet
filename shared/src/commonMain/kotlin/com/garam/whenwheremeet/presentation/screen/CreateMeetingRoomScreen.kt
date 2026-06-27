@@ -8,6 +8,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
@@ -16,7 +17,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.MaterialTheme
@@ -37,6 +37,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.garam.whenwheremeet.domain.model.MeetingType
+import com.garam.whenwheremeet.domain.model.MAX_MEETING_PARTICIPANTS
+import com.garam.whenwheremeet.domain.model.MIN_MEETING_PARTICIPANTS
 import com.garam.whenwheremeet.platform.currentLocalDate
 import com.garam.whenwheremeet.presentation.component.WwmBackground
 import com.garam.whenwheremeet.presentation.component.WwmBorder
@@ -70,11 +72,13 @@ fun CreateMeetingRoomScreen(
     var selectedStartDate by remember { mutableStateOf(today) }
     var selectedEndDate by remember { mutableStateOf(today.plus(DatePeriod(days = 6))) }
     var maxParticipantsText by remember { mutableStateOf("6") }
-    var hostIsRequired by remember { mutableStateOf(false) }
+    val maxParticipants = maxParticipantsText.toIntOrNull()
     val canCreate = hostNickname.isNotBlank() &&
         title.isNotBlank() &&
         selectedStartDate >= today &&
-        selectedEndDate >= selectedStartDate
+        selectedEndDate >= selectedStartDate &&
+        maxParticipants != null &&
+        maxParticipants in MIN_MEETING_PARTICIPANTS..MAX_MEETING_PARTICIPANTS
 
     Column(modifier.fillMaxSize().background(WwmBackground)) {
         WwmTopBar(title = "새 약속 만들기", leadingText = "×", onLeadingClick = onBack)
@@ -112,11 +116,12 @@ fun CreateMeetingRoomScreen(
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Text("모임 성격", color = WwmMuted, fontSize = 13.sp)
-                MeetingType.entries.chunked(3).forEach { types ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        types.forEach { type ->
-                            FilterChip(selected = meetingType == type, onClick = { meetingType = type }, label = { Text(type.label) })
-                        }
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    MeetingType.entries.forEach { type ->
+                        FilterChip(selected = meetingType == type, onClick = { meetingType = type }, label = { Text(type.label) })
                     }
                 }
             }
@@ -161,9 +166,16 @@ fun CreateMeetingRoomScreen(
             FormCard("인원 및 옵션") {
                 OutlinedTextField(
                     value = maxParticipantsText,
-                    onValueChange = { maxParticipantsText = it.filter(Char::isDigit) },
+                    onValueChange = { value ->
+                        val digits = value.filter(Char::isDigit)
+                        maxParticipantsText = when {
+                            digits.isBlank() -> ""
+                            digits.toIntOrNull() == null -> maxParticipantsText
+                            else -> digits.toInt().coerceAtMost(MAX_MEETING_PARTICIPANTS).toString()
+                        }
+                    },
                     label = { Text("최대 인원") },
-                    supportingText = { Text("정원이 차면 새 참여자는 입장할 수 없어요.") },
+                    supportingText = { Text("2~8명까지 설정할 수 있어요.") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(
                         keyboardType = KeyboardType.Number,
@@ -172,13 +184,6 @@ fun CreateMeetingRoomScreen(
                     keyboardActions = doneKeyboardActions,
                     modifier = Modifier.fillMaxWidth(),
                 )
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Column(Modifier.weight(1f)) {
-                        Text("필수 참석자 사용 여부", color = WwmText, fontWeight = FontWeight.Medium)
-                        Text("주최자를 필수 참석자로 지정합니다.", color = WwmMuted, fontSize = 12.sp)
-                    }
-                    Checkbox(checked = hostIsRequired, onCheckedChange = { hostIsRequired = it })
-                }
             }
         }
         WwmPrimaryButton(
@@ -193,9 +198,8 @@ fun CreateMeetingRoomScreen(
                         startDate = selectedStartDate,
                         endDate = selectedEndDate,
                         minParticipants = 1,
-                        maxParticipants = maxParticipantsText.toIntOrNull() ?: 2,
+                        maxParticipants = maxParticipants ?: MIN_MEETING_PARTICIPANTS,
                         responseDeadline = null,
-                        hostIsRequired = hostIsRequired,
                     ),
                 )
             },
@@ -235,12 +239,12 @@ private fun DateRangePickerCalendar(
             }
         }
         Row(Modifier.fillMaxWidth()) {
-            listOf("월", "화", "수", "목", "금", "토", "일").forEach {
+            listOf("일", "월", "화", "수", "목", "금", "토").forEach {
                 Text(it, Modifier.weight(1f), color = WwmMuted, style = MaterialTheme.typography.labelMedium)
             }
         }
         val dates = visibleMonth.monthDates()
-        val leading = visibleMonth.dayOfWeek.ordinal
+        val leading = (visibleMonth.dayOfWeek.ordinal + 1) % 7
         (List<LocalDate?>(leading) { null } + dates).chunked(7).forEach { week ->
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 week.forEach { date ->

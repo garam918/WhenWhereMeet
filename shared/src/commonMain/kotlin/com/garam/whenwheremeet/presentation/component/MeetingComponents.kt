@@ -49,11 +49,11 @@ fun AvailabilityCalendar(
     WwmCard(modifier.fillMaxWidth()) {
     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(Modifier.fillMaxWidth()) {
-            listOf("월", "화", "수", "목", "금", "토", "일").forEach {
+            listOf("일", "월", "화", "수", "목", "금", "토").forEach {
                 Text(it, Modifier.weight(1f), style = MaterialTheme.typography.labelMedium)
             }
         }
-        val leading = startDate.dayOfWeek.ordinal
+        val leading = (startDate.dayOfWeek.ordinal + 1) % 7
         (List<LocalDate?>(leading) { null } + dates).chunked(7).forEach { week ->
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 week.forEach { date ->

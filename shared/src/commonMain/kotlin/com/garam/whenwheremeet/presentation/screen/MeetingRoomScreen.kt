@@ -210,7 +210,6 @@ private fun DateTab(
                     Text("애매: ${summary.maybeParticipants.namesOrNone()}")
                     Text("불가능: ${summary.unavailableParticipants.namesOrNone()}")
                     Text("미응답: ${summary.unansweredParticipants.namesOrNone()}")
-                    Text(if (summary.allRequiredAvailable) "필수 참석자 가능" else "필수 참석자 확인 필요")
                     if (state.currentParticipant.isHost && canEditAvailability) {
                         WwmPrimaryButton(
                             if (room.confirmedDate == null) "이 날짜로 확정하기" else "이 날짜로 변경하기",
@@ -235,7 +234,7 @@ private fun ParticipantsTab(state: MeetingRoomUiState, onLeaveRoom: () -> Unit, 
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         Text(participant.nickname)
                         Text(
-                            listOfNotNull("방장".takeIf { participant.isHost }, "필수".takeIf { participant.isRequired }).joinToString(" · "),
+                            "방장".takeIf { participant.isHost }.orEmpty(),
                             style = MaterialTheme.typography.labelMedium,
                         )
                     }

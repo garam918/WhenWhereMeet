@@ -192,11 +192,11 @@ private fun CalendarMonthGrid(
         startMonth = month,
         endMonth = month,
         firstVisibleMonth = month,
-        firstDayOfWeek = DayOfWeek.MONDAY,
+        firstDayOfWeek = DayOfWeek.SUNDAY,
         outDateStyle = OutDateStyle.EndOfGrid,
     )
     val dayItemsByDate = remember(days) { days.associateBy { it.date } }
-    val weekDays = remember { daysOfWeek(firstDayOfWeek = DayOfWeek.MONDAY) }
+    val weekDays = remember { daysOfWeek(firstDayOfWeek = DayOfWeek.SUNDAY) }
 
     WwmCard(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
