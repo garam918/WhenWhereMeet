@@ -43,8 +43,8 @@ import org.koin.compose.getKoin
 import org.koin.compose.koinInject
 
 private const val TemporaryFeedbackUrl = "https://example.com"
-private const val TemporaryTermsUrl = "https://example.com"
-private const val TemporaryPrivacyUrl = "https://example.com"
+private const val TermsUrl = "https://whenwheremeet-legal.web.app/terms/"
+private const val PrivacyUrl = "https://whenwheremeet-legal.web.app/privacy/"
 private const val OnboardingCompletedKey = "onboarding_completed"
 private const val MeetingSnapshotKey = "meeting_mvp_snapshot_v1"
 
@@ -217,8 +217,8 @@ private fun AppContent() {
                         }
                     },
                     onOpenFeedback = { externalUrlLauncher.openUrl(TemporaryFeedbackUrl) },
-                    onOpenTerms = { externalUrlLauncher.openUrl(TemporaryTermsUrl) },
-                    onOpenPrivacy = { externalUrlLauncher.openUrl(TemporaryPrivacyUrl) },
+                    onOpenTerms = { externalUrlLauncher.openUrl(TermsUrl) },
+                    onOpenPrivacy = { externalUrlLauncher.openUrl(PrivacyUrl) },
                     onSignOut = {
                         coroutineScope.launch {
                             runCatching { authPlatform.signOut() }
@@ -241,6 +241,7 @@ private fun AppContent() {
                     },
                     onOpenHome = { appState.dispatch(UiAction.OpenHome) },
                     onOpenCalendar = { appState.dispatch(UiAction.OpenCalendar) },
+                    onCreateRoom = { appState.dispatch(UiAction.OpenCreateRoom) },
                     modifier = Modifier.padding(padding),
                 )
                 AppRoute.CreateRoom -> CreateMeetingRoomScreen(
