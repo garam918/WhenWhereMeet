@@ -3,6 +3,7 @@ package com.garam.whenwheremeet.presentation.screen
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -10,6 +11,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -24,6 +28,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.garam.whenwheremeet.domain.model.LocationSearchResult
@@ -38,11 +44,21 @@ import com.garam.whenwheremeet.presentation.component.PlaceRecommendationTab
 import com.garam.whenwheremeet.presentation.component.SectionTitle
 import com.garam.whenwheremeet.presentation.component.StatusPill
 import com.garam.whenwheremeet.presentation.component.WwmBackground
+import com.garam.whenwheremeet.presentation.component.WwmBadge
 import com.garam.whenwheremeet.presentation.component.WwmCard
+import com.garam.whenwheremeet.presentation.component.WwmDesktopBreakpoint
+import com.garam.whenwheremeet.presentation.component.WwmDesktopContentMaxWidth
+import com.garam.whenwheremeet.presentation.component.WwmDesktopFlowSidebar
+import com.garam.whenwheremeet.presentation.component.WwmDesktopFlowTopBar
+import com.garam.whenwheremeet.presentation.component.WwmFlowSection
 import com.garam.whenwheremeet.presentation.component.WwmIndigo
+import com.garam.whenwheremeet.presentation.component.WwmInfoPanel
 import com.garam.whenwheremeet.presentation.component.WwmMuted
 import com.garam.whenwheremeet.presentation.component.WwmOutlineButton
 import com.garam.whenwheremeet.presentation.component.WwmPrimaryButton
+import com.garam.whenwheremeet.presentation.component.WwmSoftIndigo
+import com.garam.whenwheremeet.presentation.component.WwmStepProgress
+import com.garam.whenwheremeet.presentation.component.WwmSurfaceSubtle
 import com.garam.whenwheremeet.presentation.component.WwmText
 import com.garam.whenwheremeet.presentation.component.WwmTopBar
 import com.garam.whenwheremeet.presentation.state.MeetingRoomUiState
@@ -80,56 +96,82 @@ fun MeetingRoomScreen(
 ) {
     val room = state.room
     var selectedTab by remember { mutableStateOf(MeetingRoomTab.DATE) }
-    Column(modifier.fillMaxSize().background(WwmBackground)) {
-        WwmTopBar(
-            title = "언제어디",
-            leadingText = "‹",
-            onLeadingClick = onBack,
-            trailingText = "↗",
-            onTrailingClick = onShare,
-        )
-        Column(
-            Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(room.title, color = WwmText, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                    room.description?.let { Text(it, color = WwmMuted) }
-                }
-                StatusPill(
-                    when (room.status) {
-                        MeetingStatus.PLACE_SELECTING -> "지역 선택 중"
-                        MeetingStatus.PLACE_CONFIRMED -> "장소 확정"
-                        MeetingStatus.DATE_CONFIRMED -> "날짜 확정"
-                        else -> "날짜 조율 중"
-                    },
-                )
-            }
-            Text("${room.meetingType.label} · 참여자 ${state.participants.size}/${room.maxParticipants}명 · 방 코드 ${room.id}", color = WwmMuted)
-            Text("후보 기간 ${room.dateRangeStart} ~ ${room.dateRangeEnd}", color = WwmMuted)
-            room.responseDeadline?.let { Text("응답 마감 $it", color = WwmMuted) }
-
-            if (room.confirmedDate != null) ConfirmedMeetingCard(room, state.participants.size)
-
-            Row(
-                Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.secondaryContainer, androidx.compose.foundation.shape.RoundedCornerShape(999.dp)).padding(3.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                MeetingRoomTab.entries.forEach { tab ->
-                    FilterChip(
-                        selected = selectedTab == tab,
-                        onClick = { selectedTab = tab },
-                        label = { Text(tab.label) },
+    val currentFlowStep = when {
+        room.selectedAreaCandidateId != null -> 3
+        room.confirmedDate != null -> 2
+        else -> 1
+    }
+    BoxWithConstraints(modifier.fillMaxSize().background(WwmBackground)) {
+        val isDesktop = maxWidth >= WwmDesktopBreakpoint
+        if (isDesktop) {
+            Column(Modifier.fillMaxSize()) {
+                WwmDesktopFlowTopBar(onBack = onBack, onShare = onShare)
+                Row(Modifier.weight(1f).fillMaxWidth()) {
+                    val selectedSection = when (selectedTab) {
+                        MeetingRoomTab.DATE -> WwmFlowSection.EVENT_DETAILS
+                        MeetingRoomTab.PARTICIPANTS -> WwmFlowSection.PARTICIPANTS
+                        MeetingRoomTab.PLACE -> if (room.status == MeetingStatus.PLACE_CONFIRMED) {
+                            WwmFlowSection.FINALIZE
+                        } else {
+                            WwmFlowSection.LOCATION_OPTIONS
+                        }
+                    }
+                    WwmDesktopFlowSidebar(
+                        selectedSection = selectedSection,
+                        onSelectSection = { section ->
+                            selectedTab = when (section) {
+                                WwmFlowSection.EVENT_DETAILS -> MeetingRoomTab.DATE
+                                WwmFlowSection.PARTICIPANTS -> MeetingRoomTab.PARTICIPANTS
+                                WwmFlowSection.LOCATION_OPTIONS,
+                                WwmFlowSection.FINALIZE -> MeetingRoomTab.PLACE
+                            }
+                        },
+                    )
+                    MeetingRoomContent(
+                        state = state,
+                        selectedTab = selectedTab,
+                        currentFlowStep = currentFlowStep,
+                        onSelectTab = { selectedTab = it },
+                        onCycleDate = onCycleDate,
+                        onSelectDate = onSelectDate,
+                        onSave = onSave,
+                        onConfirm = onConfirm,
+                        onSearchLocations = onSearchLocations,
+                        onUseCurrentLocation = onUseCurrentLocation,
+                        onSaveStartLocation = onSaveStartLocation,
+                        onSaveTransportMode = onSaveTransportMode,
+                        onCalculateAreas = onCalculateAreas,
+                        onSelectArea = onSelectArea,
+                        onSearchPlaces = onSearchPlaces,
+                        onVotePlace = onVotePlace,
+                        onConfirmPlace = onConfirmPlace,
+                        onOpenMap = onOpenMap,
+                        onShare = onShare,
+                        onLeaveRoom = onLeaveRoom,
+                        onDeleteRoom = onDeleteRoom,
+                        isDesktop = true,
                         modifier = Modifier.weight(1f),
                     )
                 }
             }
-
-            when (selectedTab) {
-                MeetingRoomTab.DATE -> DateTab(state, onCycleDate, onSelectDate, onSave, onConfirm)
-                MeetingRoomTab.PLACE -> PlaceRecommendationTab(
+        } else {
+            Column(Modifier.fillMaxSize()) {
+                WwmTopBar(
+                    title = "언제어디",
+                    leadingText = "‹",
+                    onLeadingClick = onBack,
+                    trailingText = "↗",
+                    onTrailingClick = onShare,
+                )
+                MeetingRoomContent(
                     state = state,
+                    selectedTab = selectedTab,
+                    currentFlowStep = currentFlowStep,
+                    onSelectTab = { selectedTab = it },
+                    onCycleDate = onCycleDate,
+                    onSelectDate = onSelectDate,
+                    onSave = onSave,
+                    onConfirm = onConfirm,
                     onSearchLocations = onSearchLocations,
                     onUseCurrentLocation = onUseCurrentLocation,
                     onSaveStartLocation = onSaveStartLocation,
@@ -141,10 +183,237 @@ fun MeetingRoomScreen(
                     onConfirmPlace = onConfirmPlace,
                     onOpenMap = onOpenMap,
                     onShare = onShare,
+                    onLeaveRoom = onLeaveRoom,
+                    onDeleteRoom = onDeleteRoom,
+                    isDesktop = false,
+                    modifier = Modifier.weight(1f),
                 )
-                MeetingRoomTab.PARTICIPANTS -> ParticipantsTab(state, onLeaveRoom, onDeleteRoom)
             }
-            Spacer(Modifier.height(20.dp))
+        }
+    }
+}
+
+@Composable
+private fun MeetingRoomContent(
+    state: MeetingRoomUiState,
+    selectedTab: MeetingRoomTab,
+    currentFlowStep: Int,
+    onSelectTab: (MeetingRoomTab) -> Unit,
+    onCycleDate: (LocalDate) -> Unit,
+    onSelectDate: (LocalDate) -> Unit,
+    onSave: () -> Unit,
+    onConfirm: (LocalDate) -> Unit,
+    onSearchLocations: (String) -> Unit,
+    onUseCurrentLocation: () -> Unit,
+    onSaveStartLocation: (LocationSearchResult) -> Unit,
+    onSaveTransportMode: (TransportMode) -> Unit,
+    onCalculateAreas: () -> Unit,
+    onSelectArea: (String) -> Unit,
+    onSearchPlaces: () -> Unit,
+    onVotePlace: (String, PlaceVoteType) -> Unit,
+    onConfirmPlace: (PlaceCandidate) -> Unit,
+    onOpenMap: (PlaceCandidate) -> Unit,
+    onShare: () -> Unit,
+    onLeaveRoom: () -> Unit,
+    onDeleteRoom: () -> Unit,
+    isDesktop: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val room = state.room
+    Column(
+        modifier.verticalScroll(rememberScrollState()).padding(if (isDesktop) 32.dp else 20.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        if (isDesktop) {
+            Row(
+                Modifier.fillMaxWidth().widthIn(max = WwmDesktopContentMaxWidth).align(Alignment.CenterHorizontally),
+                horizontalArrangement = Arrangement.spacedBy(32.dp),
+                verticalAlignment = Alignment.Top,
+            ) {
+                Column(Modifier.width(320.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    MeetingRoomHeader(state)
+                    WwmStepProgress(
+                        labels = listOf("날짜 정하기", "중간 지역", "장소 투표"),
+                        currentStep = currentFlowStep,
+                    )
+                    if (room.confirmedDate != null) ConfirmedMeetingCard(room, state.participants.size)
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    MeetingRoomTabSelector(selectedTab = selectedTab, onSelectTab = onSelectTab)
+                    MeetingRoomSelectedTab(
+                        state = state,
+                        selectedTab = selectedTab,
+                        onCycleDate = onCycleDate,
+                        onSelectDate = onSelectDate,
+                        onSave = onSave,
+                        onConfirm = onConfirm,
+                        onSearchLocations = onSearchLocations,
+                        onUseCurrentLocation = onUseCurrentLocation,
+                        onSaveStartLocation = onSaveStartLocation,
+                        onSaveTransportMode = onSaveTransportMode,
+                        onCalculateAreas = onCalculateAreas,
+                        onSelectArea = onSelectArea,
+                        onSearchPlaces = onSearchPlaces,
+                        onVotePlace = onVotePlace,
+                        onConfirmPlace = onConfirmPlace,
+                        onOpenMap = onOpenMap,
+                        onShare = onShare,
+                        onLeaveRoom = onLeaveRoom,
+                        onDeleteRoom = onDeleteRoom,
+                        isDesktop = true,
+                    )
+                }
+            }
+        } else {
+            MeetingRoomHeader(state)
+            WwmStepProgress(labels = listOf("날짜 정하기", "중간 지역", "장소 투표"), currentStep = currentFlowStep)
+            if (room.confirmedDate != null) ConfirmedMeetingCard(room, state.participants.size)
+            MeetingRoomTabSelector(selectedTab = selectedTab, onSelectTab = onSelectTab)
+            MeetingRoomSelectedTab(
+                state = state,
+                selectedTab = selectedTab,
+                onCycleDate = onCycleDate,
+                onSelectDate = onSelectDate,
+                onSave = onSave,
+                onConfirm = onConfirm,
+                onSearchLocations = onSearchLocations,
+                onUseCurrentLocation = onUseCurrentLocation,
+                onSaveStartLocation = onSaveStartLocation,
+                onSaveTransportMode = onSaveTransportMode,
+                onCalculateAreas = onCalculateAreas,
+                onSelectArea = onSelectArea,
+                onSearchPlaces = onSearchPlaces,
+                onVotePlace = onVotePlace,
+                onConfirmPlace = onConfirmPlace,
+                onOpenMap = onOpenMap,
+                onShare = onShare,
+                onLeaveRoom = onLeaveRoom,
+                onDeleteRoom = onDeleteRoom,
+                isDesktop = false,
+            )
+        }
+        Spacer(Modifier.height(20.dp))
+    }
+}
+
+@Composable
+private fun MeetingRoomTabSelector(selectedTab: MeetingRoomTab, onSelectTab: (MeetingRoomTab) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().background(WwmSurfaceSubtle, androidx.compose.foundation.shape.RoundedCornerShape(14.dp)).padding(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        MeetingRoomTab.entries.forEach { tab ->
+            FilterChip(
+                selected = selectedTab == tab,
+                onClick = { onSelectTab(tab) },
+                label = { Text(tab.label) },
+                modifier = Modifier.weight(1f),
+            )
+        }
+    }
+}
+
+@Composable
+private fun MeetingRoomSelectedTab(
+    state: MeetingRoomUiState,
+    selectedTab: MeetingRoomTab,
+    onCycleDate: (LocalDate) -> Unit,
+    onSelectDate: (LocalDate) -> Unit,
+    onSave: () -> Unit,
+    onConfirm: (LocalDate) -> Unit,
+    onSearchLocations: (String) -> Unit,
+    onUseCurrentLocation: () -> Unit,
+    onSaveStartLocation: (LocationSearchResult) -> Unit,
+    onSaveTransportMode: (TransportMode) -> Unit,
+    onCalculateAreas: () -> Unit,
+    onSelectArea: (String) -> Unit,
+    onSearchPlaces: () -> Unit,
+    onVotePlace: (String, PlaceVoteType) -> Unit,
+    onConfirmPlace: (PlaceCandidate) -> Unit,
+    onOpenMap: (PlaceCandidate) -> Unit,
+    onShare: () -> Unit,
+    onLeaveRoom: () -> Unit,
+    onDeleteRoom: () -> Unit,
+    isDesktop: Boolean,
+) {
+    when (selectedTab) {
+        MeetingRoomTab.DATE -> DateTab(state, onCycleDate, onSelectDate, onSave, onConfirm)
+        MeetingRoomTab.PLACE -> PlaceRecommendationTab(
+            state = state,
+            onSearchLocations = onSearchLocations,
+            onUseCurrentLocation = onUseCurrentLocation,
+            onSaveStartLocation = onSaveStartLocation,
+            onSaveTransportMode = onSaveTransportMode,
+            onCalculateAreas = onCalculateAreas,
+            onSelectArea = onSelectArea,
+            onSearchPlaces = onSearchPlaces,
+            onVotePlace = onVotePlace,
+            onConfirmPlace = onConfirmPlace,
+            onOpenMap = onOpenMap,
+            onShare = onShare,
+            isDesktop = isDesktop,
+        )
+        MeetingRoomTab.PARTICIPANTS -> ParticipantsTab(state, onLeaveRoom, onDeleteRoom)
+    }
+}
+
+@Composable
+private fun MeetingRoomHeader(state: MeetingRoomUiState) {
+    val room = state.room
+    val statusText = when (room.status) {
+        MeetingStatus.PLACE_SELECTING -> "장소 조율 중"
+        MeetingStatus.PLACE_CONFIRMED -> "약속 확정"
+        MeetingStatus.DATE_CONFIRMED -> "날짜 확정"
+        else -> "날짜 조율 중"
+    }
+    WwmCard(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(room.meetingType.label, color = WwmIndigo, style = MaterialTheme.typography.labelLarge)
+                    Text(room.title, color = WwmText, style = MaterialTheme.typography.headlineSmall)
+                }
+                StatusPill(statusText)
+            }
+            room.description?.takeIf { it.isNotBlank() }?.let {
+                Text(it, color = WwmMuted, style = MaterialTheme.typography.bodyMedium)
+            }
+            Row(
+                Modifier.fillMaxWidth().background(WwmSoftIndigo, androidx.compose.foundation.shape.RoundedCornerShape(12.dp)).padding(12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("초대 코드", color = WwmMuted, style = MaterialTheme.typography.labelSmall)
+                    Text(room.id, color = WwmText, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                }
+                Text("참여자 ${state.participants.size}/${room.maxParticipants}명", color = WwmIndigo, style = MaterialTheme.typography.labelLarge)
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    state.participants.take(4).forEach { participant ->
+                        androidx.compose.foundation.layout.Box(
+                            Modifier.size(30.dp).background(WwmSoftIndigo, androidx.compose.foundation.shape.CircleShape),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(participant.nickname.take(1), color = WwmIndigo, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                    if (state.participants.size > 4) {
+                        androidx.compose.foundation.layout.Box(
+                            Modifier.size(30.dp).background(WwmSurfaceSubtle, androidx.compose.foundation.shape.CircleShape),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text("+${state.participants.size - 4}", color = WwmMuted, style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                }
+                Text(
+                    "${room.dateRangeStart} ~ ${room.dateRangeEnd}",
+                    color = WwmMuted,
+                    style = MaterialTheme.typography.labelMedium,
+                )
+            }
         }
     }
 }
@@ -163,11 +432,15 @@ private fun DateTab(
     }
     val canEditAvailability = room.confirmedDate == null || availabilityEditEnabled
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        SectionTitle("내 가능한 날짜")
+        SectionTitle("참석 가능한 날짜를 선택해주세요")
         if (room.confirmedDate == null) {
-            Text("날짜를 누르면 미선택 → 가능 → 애매 → 불가능 순서로 바뀝니다.", style = MaterialTheme.typography.bodySmall)
+            WwmInfoPanel(
+                title = "날짜를 눌러 응답하세요",
+                description = "미선택 → 가능 → 애매 → 불가능 순서로 바뀌어요.",
+                icon = "✓",
+            )
         } else {
-            Text("약속 날짜가 확정되어 날짜 선택이 잠겨 있어요.", style = MaterialTheme.typography.bodySmall)
+            WwmInfoPanel("날짜가 확정됐어요", "변경이 필요하면 아래 버튼을 눌러 응답을 수정할 수 있어요.", icon = "✓")
             if (!availabilityEditEnabled) {
                 WwmOutlineButton("날짜 변경하기", onClick = { availabilityEditEnabled = true })
             } else {
@@ -231,12 +504,21 @@ private fun ParticipantsTab(state: MeetingRoomUiState, onLeaveRoom: () -> Unit, 
         WwmCard(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp)) {
                 state.participants.forEachIndexed { index, participant ->
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text(participant.nickname)
-                        Text(
-                            "방장".takeIf { participant.isHost }.orEmpty(),
-                            style = MaterialTheme.typography.labelMedium,
-                        )
+                    Row(
+                        Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                            androidx.compose.foundation.layout.Box(
+                                Modifier.size(34.dp).background(WwmSoftIndigo, androidx.compose.foundation.shape.CircleShape),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(participant.nickname.take(1), color = WwmIndigo, fontWeight = FontWeight.Bold)
+                            }
+                            Text(participant.nickname, color = WwmText)
+                        }
+                        if (participant.isHost) WwmBadge("방장")
                     }
                     if (index < state.participants.lastIndex) HorizontalDivider(Modifier.padding(vertical = 8.dp))
                 }
