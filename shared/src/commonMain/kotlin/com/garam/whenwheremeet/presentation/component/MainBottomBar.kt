@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -49,48 +50,48 @@ fun MainBottomBar(
     onMyPageClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Row(
-        modifier.fillMaxWidth().height(80.dp)
-            .background(WwmNavBackground, RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp))
-            .padding(horizontal = 24.dp, vertical = 10.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        MainBottomItem(BottomIcon.Home, "홈", selectedTab == MainTab.HOME, onHomeClick)
-        MainBottomItem(BottomIcon.Calendar, "캘린더", selectedTab == MainTab.CALENDAR, onCalendarClick)
-        MainBottomItem(BottomIcon.Person, "내 정보", selectedTab == MainTab.MY_PAGE, onMyPageClick)
+    Column(modifier.fillMaxWidth().background(WwmNavBackground)) {
+        HorizontalDivider(color = WwmBorder)
+        Row(
+            Modifier.fillMaxWidth().height(72.dp).padding(horizontal = 28.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            MainBottomItem(BottomIcon.Home, "홈", selectedTab == MainTab.HOME, onHomeClick)
+            MainBottomItem(BottomIcon.Calendar, "캘린더", selectedTab == MainTab.CALENDAR, onCalendarClick)
+            MainBottomItem(BottomIcon.Person, "마이", selectedTab == MainTab.MY_PAGE, onMyPageClick)
+        }
     }
 }
 
 @Composable
 private fun MainBottomItem(icon: BottomIcon, label: String, selected: Boolean, onClick: () -> Unit) {
-    val contentColor = if (selected) Color.White else WwmMuted
-    Box(
+    val contentColor = if (selected) WwmIndigo else WwmMuted
+    Column(
         Modifier
-            .width(92.dp)
-            .height(60.dp)
+            .width(88.dp)
+            .height(64.dp)
             .semantics {
                 role = Role.Tab
                 contentDescription = label
                 this.selected = selected
             }
-            .background(
-                color = if (selected) WwmIndigo else Color.Transparent,
-                shape = RoundedCornerShape(999.dp),
-            )
             .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically),
     ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-            BottomBarIcon(icon = icon, color = contentColor)
-            Text(
-                label,
-                color = contentColor,
-                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-                fontSize = 13.sp,
-                textAlign = TextAlign.Center,
-            )
-        }
+        Box(
+            Modifier.width(24.dp).height(3.dp)
+                .background(if (selected) WwmIndigo else Color.Transparent, RoundedCornerShape(99.dp)),
+        )
+        BottomBarIcon(icon = icon, color = contentColor)
+        Text(
+            label,
+            color = contentColor,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+            fontSize = 12.sp,
+            textAlign = TextAlign.Center,
+        )
     }
 }
 
@@ -102,9 +103,9 @@ private enum class BottomIcon {
 
 @Composable
 private fun BottomBarIcon(icon: BottomIcon, color: Color) {
-    Canvas(Modifier.size(30.dp).padding(bottom = 3.dp)) {
+    Canvas(Modifier.size(24.dp)) {
         val stroke = Stroke(
-            width = 3.dp.toPx(),
+            width = 2.2.dp.toPx(),
             cap = StrokeCap.Square,
             join = StrokeJoin.Miter,
         )
@@ -142,20 +143,20 @@ private fun BottomBarIcon(icon: BottomIcon, color: Color) {
                     color = color,
                     start = Offset(size.width * 0.22f, size.height * 0.42f),
                     end = Offset(size.width * 0.78f, size.height * 0.42f),
-                    strokeWidth = 3.dp.toPx(),
+                    strokeWidth = 2.2.dp.toPx(),
                 )
                 drawLine(
                     color = color,
                     start = Offset(size.width * 0.35f, size.height * 0.18f),
                     end = Offset(size.width * 0.35f, size.height * 0.34f),
-                    strokeWidth = 3.dp.toPx(),
+                    strokeWidth = 2.2.dp.toPx(),
                     cap = StrokeCap.Round,
                 )
                 drawLine(
                     color = color,
                     start = Offset(size.width * 0.65f, size.height * 0.18f),
                     end = Offset(size.width * 0.65f, size.height * 0.34f),
-                    strokeWidth = 3.dp.toPx(),
+                    strokeWidth = 2.2.dp.toPx(),
                     cap = StrokeCap.Round,
                 )
             }
