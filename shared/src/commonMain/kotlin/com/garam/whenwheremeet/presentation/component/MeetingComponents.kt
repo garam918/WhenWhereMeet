@@ -87,16 +87,22 @@ private fun DateCell(
     enabled: Boolean = true,
 ) {
     val background = when (status) {
-        AvailabilityStatus.AVAILABLE -> WwmMint
-        AvailabilityStatus.MAYBE -> WwmOrange
-        AvailabilityStatus.UNAVAILABLE -> Color(0xFFE2E8F8)
+        AvailabilityStatus.AVAILABLE -> WwmMint.copy(alpha = 0.16f)
+        AvailabilityStatus.MAYBE -> WwmOrange.copy(alpha = 0.16f)
+        AvailabilityStatus.UNAVAILABLE -> WwmError.copy(alpha = 0.12f)
         null -> Color.Transparent
     }
     val borderColor = when (status) {
         AvailabilityStatus.AVAILABLE -> WwmMint
         AvailabilityStatus.MAYBE -> WwmOrange
-        AvailabilityStatus.UNAVAILABLE -> Color(0xFFE2E8F8)
-        null -> Color.Transparent
+        AvailabilityStatus.UNAVAILABLE -> WwmError
+        null -> WwmBorder
+    }
+    val textColor = when (status) {
+        AvailabilityStatus.AVAILABLE -> WwmMintText
+        AvailabilityStatus.MAYBE -> Color(0xFF9A6200)
+        AvailabilityStatus.UNAVAILABLE -> WwmError
+        null -> WwmText
     }
     Column(
         modifier = modifier
@@ -107,7 +113,7 @@ private fun DateCell(
             .padding(5.dp),
         verticalArrangement = Arrangement.SpaceBetween,
     ) {
-        Text(date.dayOfMonth.toString(), fontWeight = FontWeight.SemiBold)
+        Text(date.dayOfMonth.toString(), color = textColor, fontWeight = FontWeight.SemiBold)
         if (summary != null && summary.availableParticipants.isNotEmpty()) {
             Box(Modifier.size(5.dp).background(WwmIndigo, RoundedCornerShape(99.dp)))
         }
@@ -116,27 +122,32 @@ private fun DateCell(
 
 @Composable
 fun AvailabilityLegend() {
-    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        LegendItem("가능", WwmMint)
-        LegendItem("조율 가능", WwmOrange)
-        LegendItem("내 일정", WwmIndigo)
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        LegendItem("가능", WwmMint, Modifier.weight(1f))
+        LegendItem("애매", WwmOrange, Modifier.weight(1f))
+        LegendItem("불가", WwmError, Modifier.weight(1f))
     }
 }
 
 @Composable
-private fun LegendItem(label: String, color: Color) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(12.dp).background(color, RoundedCornerShape(3.dp)))
+private fun LegendItem(label: String, color: Color, modifier: Modifier = Modifier) {
+    Row(
+        modifier.background(color.copy(alpha = 0.1f), RoundedCornerShape(10.dp)).padding(horizontal = 10.dp, vertical = 9.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.size(9.dp).background(color, RoundedCornerShape(3.dp)))
         Spacer(Modifier.width(4.dp))
-        Text(label, style = MaterialTheme.typography.labelMedium)
+        Text(label, color = WwmText, style = MaterialTheme.typography.labelMedium)
     }
 }
 
 @Composable
 fun ConfirmedMeetingCard(room: MeetingRoom, participantCount: Int) {
     WwmCard(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             StatusPill(if (room.confirmedPlace == null) "날짜 확정" else "장소 확정")
+            Text("약속이 확정됐어요", color = WwmMintText, style = MaterialTheme.typography.labelLarge)
             Text(room.confirmedDate?.toKoreanDate().orEmpty(), color = WwmText, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
             Text("${room.title} · 참여자 ${participantCount}명", color = WwmMuted)
             Text("장소: ${room.confirmedPlace?.name ?: "미정"}", color = WwmMuted)
@@ -146,13 +157,13 @@ fun ConfirmedMeetingCard(room: MeetingRoom, participantCount: Int) {
 
 @Composable
 fun SectionTitle(text: String) {
-    Text(text, color = WwmText, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+    Text(text, color = WwmText, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
 }
 
 @Composable
 fun StatusPill(text: String) {
     val confirmed = text.contains("확정")
-    Surface(color = if (confirmed) WwmMint else WwmSoftIndigo, shape = RoundedCornerShape(100.dp)) {
+    Surface(color = if (confirmed) WwmMint.copy(alpha = 0.14f) else WwmSoftIndigo, shape = RoundedCornerShape(100.dp)) {
         Text(
             text,
             Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
