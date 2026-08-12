@@ -1,5 +1,18 @@
 {
   "projects": {
     "default": "whenwheremeet"
-  }
+  },
+  "targets": {
+    "whenwheremeet": {
+      "hosting": {
+        "app": [
+          "whenwheremeet"
+        ],
+        "legal": [
+          "whenwheremeet-legal"
+        ]
+      }
+    }
+  },
+  "etags": {}
 }
