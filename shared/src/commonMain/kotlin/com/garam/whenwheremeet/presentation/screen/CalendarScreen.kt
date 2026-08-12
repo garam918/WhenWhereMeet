@@ -5,6 +5,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -14,8 +15,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
@@ -37,6 +42,9 @@ import com.garam.whenwheremeet.presentation.component.StatusPill
 import com.garam.whenwheremeet.presentation.component.WwmBackground
 import com.garam.whenwheremeet.presentation.component.WwmBorder
 import com.garam.whenwheremeet.presentation.component.WwmCard
+import com.garam.whenwheremeet.presentation.component.WwmDesktopBreakpoint
+import com.garam.whenwheremeet.presentation.component.WwmDesktopContentMaxWidth
+import com.garam.whenwheremeet.presentation.component.WwmDesktopTopBar
 import com.garam.whenwheremeet.presentation.component.WwmEmptyState
 import com.garam.whenwheremeet.presentation.component.WwmError
 import com.garam.whenwheremeet.presentation.component.WwmIndigo
@@ -76,47 +84,124 @@ fun CalendarScreen(
     onRefresh: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Box(modifier.fillMaxSize().background(WwmBackground)) {
-        Column(Modifier.fillMaxSize()) {
-            LazyColumn(
-                modifier = Modifier.weight(1f),
-                contentPadding = PaddingValues(start = 20.dp, top = 18.dp, end = 20.dp, bottom = 108.dp),
-                verticalArrangement = Arrangement.spacedBy(18.dp),
+    BoxWithConstraints(modifier.fillMaxSize().background(WwmBackground)) {
+        if (maxWidth >= WwmDesktopBreakpoint) {
+            DesktopCalendarContent(
+                state = state,
+                onPreviousMonth = onPreviousMonth,
+                onNextMonth = onNextMonth,
+                onToday = onToday,
+                onFilterChange = onFilterChange,
+                onSelectDate = onSelectDate,
+                onOpenRoom = onOpenRoom,
+                onOpenMap = onOpenMap,
+                onCreateRoom = onCreateRoom,
+                onOpenHome = onOpenHome,
+                onOpenMyPage = onOpenMyPage,
+            )
+        } else {
+            Box(Modifier.fillMaxSize()) {
+                Column(Modifier.fillMaxSize()) {
+                    LazyColumn(
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(start = 20.dp, top = 18.dp, end = 20.dp, bottom = 108.dp),
+                        verticalArrangement = Arrangement.spacedBy(18.dp),
+                    ) {
+                        item {
+                            CalendarMonthHeader(
+                                monthText = state.currentMonth.displayText(),
+                                onPreviousMonth = onPreviousMonth,
+                                onNextMonth = onNextMonth,
+                                onToday = onToday,
+                            )
+                        }
+                        item { CalendarSummaryCard(state) }
+                        item { CalendarFilterChips(selected = state.filter, onFilterChange = onFilterChange) }
+                        item { CalendarMonthGrid(state.currentMonth, state.dayItems, onSelectDate) }
+                        item { WwmSectionHeader("▣", "${state.selectedDate.monthNumber}월 ${state.selectedDate.dayOfMonth}일 약속") }
+                        if (state.selectedDateMeetings.isEmpty()) {
+                            item { EmptyCalendarDay(onCreateRoom = onCreateRoom) }
+                        } else {
+                            items(state.selectedDateMeetings, key = { it.roomId }) { meeting ->
+                                CalendarMeetingCard(meeting = meeting, onOpenRoom = onOpenRoom, onOpenMap = onOpenMap)
+                            }
+                        }
+                    }
+                }
+                MainBottomBar(
+                    selectedTab = MainTab.CALENDAR,
+                    onHomeClick = onOpenHome,
+                    onCalendarClick = {},
+                    onMyPageClick = onOpenMyPage,
+                    modifier = Modifier.align(Alignment.BottomCenter),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DesktopCalendarContent(
+    state: CalendarUiState,
+    onPreviousMonth: () -> Unit,
+    onNextMonth: () -> Unit,
+    onToday: () -> Unit,
+    onFilterChange: (CalendarFilter) -> Unit,
+    onSelectDate: (LocalDate) -> Unit,
+    onOpenRoom: (String) -> Unit,
+    onOpenMap: (String) -> Unit,
+    onCreateRoom: () -> Unit,
+    onOpenHome: () -> Unit,
+    onOpenMyPage: () -> Unit,
+) {
+    Column(Modifier.fillMaxSize()) {
+        WwmDesktopTopBar(
+            selectedTab = MainTab.CALENDAR,
+            onHomeClick = onOpenHome,
+            onCalendarClick = {},
+            onMyPageClick = onOpenMyPage,
+            onCreateRoom = onCreateRoom,
+        )
+        Row(
+            Modifier.weight(1f).fillMaxWidth().widthIn(max = WwmDesktopContentMaxWidth)
+                .align(Alignment.CenterHorizontally).padding(24.dp),
+            horizontalArrangement = Arrangement.spacedBy(24.dp),
+        ) {
+            Column(
+                Modifier.weight(1f).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
-                item {
-                    CalendarMonthHeader(
-                        monthText = state.currentMonth.displayText(),
-                        onPreviousMonth = onPreviousMonth,
-                        onNextMonth = onNextMonth,
-                        onToday = onToday,
-                    )
-                }
-                item { CalendarSummaryCard(state) }
-                item { CalendarFilterChips(selected = state.filter, onFilterChange = onFilterChange) }
-                item {
-                    CalendarMonthGrid(
-                        currentMonth = state.currentMonth,
-                        days = state.dayItems,
-                        onSelectDate = onSelectDate,
-                    )
-                }
-                item { WwmSectionHeader("▣", "${state.selectedDate.monthNumber}월 ${state.selectedDate.dayOfMonth}일 약속") }
+                CalendarMonthHeader(
+                    monthText = state.currentMonth.displayText(),
+                    onPreviousMonth = onPreviousMonth,
+                    onNextMonth = onNextMonth,
+                    onToday = onToday,
+                )
+                CalendarSummaryCard(state)
+                CalendarMonthGrid(state.currentMonth, state.dayItems, onSelectDate)
+            }
+            Column(
+                Modifier.width(360.dp).fillMaxSize().background(Color.White, RoundedCornerShape(16.dp))
+                    .border(1.dp, WwmBorder, RoundedCornerShape(16.dp)).verticalScroll(rememberScrollState()).padding(18.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                Text(
+                    "${state.selectedDate.monthNumber}월 ${state.selectedDate.dayOfMonth}일",
+                    color = WwmText,
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+                Text("${state.selectedDateMeetings.size}개의 약속", color = WwmMuted)
+                CalendarFilterChips(selected = state.filter, onFilterChange = onFilterChange)
                 if (state.selectedDateMeetings.isEmpty()) {
-                    item { EmptyCalendarDay(onCreateRoom = onCreateRoom) }
+                    EmptyCalendarDay(onCreateRoom = onCreateRoom)
                 } else {
-                    items(state.selectedDateMeetings, key = { it.roomId }) { meeting ->
+                    state.selectedDateMeetings.forEach { meeting ->
                         CalendarMeetingCard(meeting = meeting, onOpenRoom = onOpenRoom, onOpenMap = onOpenMap)
                     }
                 }
             }
         }
-        MainBottomBar(
-            selectedTab = MainTab.CALENDAR,
-            onHomeClick = onOpenHome,
-            onCalendarClick = {},
-            onMyPageClick = onOpenMyPage,
-            modifier = Modifier.align(Alignment.BottomCenter),
-        )
     }
 }
 
