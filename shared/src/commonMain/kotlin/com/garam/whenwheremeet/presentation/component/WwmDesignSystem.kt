@@ -30,11 +30,11 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -49,18 +49,19 @@ import whenwheremeet.shared.generated.resources.pretendard_medium
 import whenwheremeet.shared.generated.resources.pretendard_regular
 import whenwheremeet.shared.generated.resources.pretendard_semi_bold
 
-val WwmIndigo = Color(0xFF4F46E5)
-val WwmIndigoBright = Color(0xFF4338CA)
-val WwmBackground = Color(0xFFF8F7FF)
-val WwmNavBackground = Color(0xFFF8F7FF)
-val WwmSoftIndigo = Color(0xFFEDEBFF)
-val WwmBorder = Color(0xFFE5E7EB)
-val WwmText = Color(0xFF111827)
-val WwmMuted = Color(0xFF6B7280)
-val WwmMint = Color(0xFF22C55E)
-val WwmMintText = Color(0xFF16A34A)
+val WwmIndigo = Color(0xFF5146E5)
+val WwmIndigoBright = Color(0xFF3F35D3)
+val WwmBackground = Color(0xFFF7F8FC)
+val WwmNavBackground = Color.White
+val WwmSoftIndigo = Color(0xFFEFEEFF)
+val WwmBorder = Color(0xFFE6E7EE)
+val WwmText = Color(0xFF171A24)
+val WwmMuted = Color(0xFF676B7A)
+val WwmMint = Color(0xFF21B981)
+val WwmMintText = Color(0xFF11815B)
 val WwmOrange = Color(0xFFF59E0B)
-val WwmError = Color(0xFFEF4444)
+val WwmError = Color(0xFFEF5B5B)
+val WwmSurfaceSubtle = Color(0xFFF0F1F6)
 
 private val WwmColors: ColorScheme = lightColorScheme(
     primary = WwmIndigo,
@@ -77,7 +78,7 @@ private val WwmColors: ColorScheme = lightColorScheme(
     onBackground = WwmText,
     surface = Color.White,
     onSurface = WwmText,
-    surfaceVariant = WwmBackground,
+    surfaceVariant = WwmSurfaceSubtle,
     onSurfaceVariant = WwmMuted,
     error = WwmError,
     onError = Color.White,
@@ -86,15 +87,30 @@ private val WwmColors: ColorScheme = lightColorScheme(
 )
 
 @Composable
-private fun WwmTypography() = Typography(
-    fontFamily = FontFamily(
+private fun WwmTypography(): Typography {
+    val fontFamily = FontFamily(
         Font(Res.font.pretendard_regular, FontWeight.Normal),
         Font(Res.font.pretendard_medium, FontWeight.Medium),
         Font(Res.font.pretendard_semi_bold, FontWeight.SemiBold),
         Font(Res.font.pretendard_bold, FontWeight.Bold),
         Font(Res.font.pretendard_extra_bold, FontWeight.ExtraBold),
     )
-)
+    return Typography(
+        displaySmall = TextStyle(fontFamily = fontFamily, fontWeight = FontWeight.Bold, fontSize = 32.sp, lineHeight = 40.sp),
+        headlineLarge = TextStyle(fontFamily = fontFamily, fontWeight = FontWeight.Bold, fontSize = 28.sp, lineHeight = 36.sp),
+        headlineMedium = TextStyle(fontFamily = fontFamily, fontWeight = FontWeight.Bold, fontSize = 24.sp, lineHeight = 32.sp),
+        headlineSmall = TextStyle(fontFamily = fontFamily, fontWeight = FontWeight.Bold, fontSize = 21.sp, lineHeight = 29.sp),
+        titleLarge = TextStyle(fontFamily = fontFamily, fontWeight = FontWeight.SemiBold, fontSize = 19.sp, lineHeight = 27.sp),
+        titleMedium = TextStyle(fontFamily = fontFamily, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, lineHeight = 24.sp),
+        titleSmall = TextStyle(fontFamily = fontFamily, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, lineHeight = 20.sp),
+        bodyLarge = TextStyle(fontFamily = fontFamily, fontWeight = FontWeight.Normal, fontSize = 16.sp, lineHeight = 24.sp),
+        bodyMedium = TextStyle(fontFamily = fontFamily, fontWeight = FontWeight.Normal, fontSize = 14.sp, lineHeight = 21.sp),
+        bodySmall = TextStyle(fontFamily = fontFamily, fontWeight = FontWeight.Normal, fontSize = 12.sp, lineHeight = 18.sp),
+        labelLarge = TextStyle(fontFamily = fontFamily, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, lineHeight = 20.sp),
+        labelMedium = TextStyle(fontFamily = fontFamily, fontWeight = FontWeight.Medium, fontSize = 12.sp, lineHeight = 17.sp),
+        labelSmall = TextStyle(fontFamily = fontFamily, fontWeight = FontWeight.Medium, fontSize = 11.sp, lineHeight = 16.sp),
+    )
+}
 
 @Composable
 fun WwmTheme(content: @Composable () -> Unit) {
@@ -112,7 +128,7 @@ fun WwmTopBar(
     onTrailingClick: (() -> Unit)? = null,
 ) {
     Row(
-        Modifier.fillMaxWidth().height(56.dp).background(WwmBackground).padding(horizontal = 20.dp),
+        Modifier.fillMaxWidth().height(60.dp).background(Color.White).padding(horizontal = 16.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -121,30 +137,28 @@ fun WwmTopBar(
                 Text(
                     it,
                     modifier = Modifier.clickable(enabled = onLeadingClick != null) { onLeadingClick?.invoke() }.padding(8.dp),
-                    color = if (onLeadingClick == null) WwmIndigo else WwmMuted,
-                    fontSize = 20.sp,
+                    color = WwmText,
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Medium,
                 )
             }
         }
-        Text(title, color = WwmIndigo, fontSize = 23.sp, fontWeight = FontWeight.Medium)
+        Text(title, color = WwmIndigo, fontSize = 18.sp, fontWeight = FontWeight.Bold)
         Box(Modifier.width(48.dp), contentAlignment = Alignment.CenterEnd) {
             when {
                 trailingIcon != null -> IconButton(
                     onClick = { onTrailingClick?.invoke() },
                     enabled = onTrailingClick != null,
                     modifier = Modifier.size(40.dp)
-                        .background(Color.White, CircleShape)
-                        .border(2.dp, WwmBorder, CircleShape)
                         .semantics {
                             trailingIconContentDescription?.let { contentDescription = it }
                         },
                 ) { trailingIcon() }
 
                 trailingText != null -> Box(
-                    Modifier.background(Color.White, CircleShape)
-                        .border(2.dp, WwmBorder, CircleShape)
+                    Modifier.background(WwmSoftIndigo, CircleShape)
                         .clickable(enabled = onTrailingClick != null) { onTrailingClick?.invoke() }
-                        .padding(horizontal = 9.dp, vertical = 5.dp),
+                        .padding(horizontal = 10.dp, vertical = 7.dp),
                     contentAlignment = Alignment.Center,
                 ) { Text(trailingText, color = WwmIndigo, fontWeight = FontWeight.Bold) }
             }
@@ -188,9 +202,8 @@ fun WwmCard(
 ) {
     Card(
         modifier = modifier
-            .shadow(2.dp, RoundedCornerShape(12.dp))
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(16.dp),
         border = BorderStroke(1.dp, WwmBorder),
         colors = CardDefaults.cardColors(containerColor = Color.White),
     ) { content() }
@@ -207,17 +220,23 @@ fun WwmPrimaryButton(
         onClick = onClick,
         modifier = modifier.fillMaxWidth().height(52.dp),
         enabled = enabled,
-        shape = RoundedCornerShape(999.dp),
+        shape = RoundedCornerShape(14.dp),
         colors = ButtonDefaults.buttonColors(containerColor = WwmIndigo),
-    ) { Text(text, fontWeight = FontWeight.SemiBold) }
+    ) { Text(text, fontWeight = FontWeight.SemiBold, fontSize = 15.sp) }
 }
 
 @Composable
-fun WwmOutlineButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+fun WwmOutlineButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+) {
     OutlinedButton(
         onClick = onClick,
-        modifier = modifier.height(40.dp),
-        shape = RoundedCornerShape(999.dp),
+        modifier = modifier.height(48.dp),
+        enabled = enabled,
+        shape = RoundedCornerShape(14.dp),
         border = BorderStroke(1.dp, WwmIndigo),
         colors = ButtonDefaults.outlinedButtonColors(contentColor = WwmIndigo),
     ) { Text(text) }
@@ -232,13 +251,19 @@ fun WwmSectionHeader(icon: String, title: String) {
 }
 
 @Composable
-fun WwmEmptyState(text: String) {
-    WwmCard(Modifier.fillMaxWidth()) {
-        Text(
-            text,
-            Modifier.fillMaxWidth().padding(28.dp),
-            color = WwmMuted,
-            textAlign = TextAlign.Center,
-        )
+fun WwmEmptyState(
+    text: String,
+    modifier: Modifier = Modifier,
+    icon: String = "○",
+) {
+    Column(
+        modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(16.dp)).border(1.dp, WwmBorder, RoundedCornerShape(16.dp)).padding(28.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Box(Modifier.size(42.dp).background(WwmSoftIndigo, CircleShape), contentAlignment = Alignment.Center) {
+            Text(icon, color = WwmIndigo, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        }
+        Text(text, color = WwmMuted, textAlign = TextAlign.Center, style = MaterialTheme.typography.bodyMedium)
     }
 }
