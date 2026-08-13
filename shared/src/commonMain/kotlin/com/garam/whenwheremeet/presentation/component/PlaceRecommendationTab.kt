@@ -10,20 +10,21 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -31,20 +32,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
-import com.garam.whenwheremeet.domain.model.AreaRecommendation
+import com.garam.whenwheremeet.domain.model.DestinationStationOption
 import com.garam.whenwheremeet.domain.model.LocationSearchResult
+import com.garam.whenwheremeet.domain.model.MeetingStatus
 import com.garam.whenwheremeet.domain.model.PlaceCandidate
-import com.garam.whenwheremeet.domain.model.PlaceVoteType
-import com.garam.whenwheremeet.domain.model.ScoredPlaceCandidate
-import com.garam.whenwheremeet.domain.model.TransportMode
-import com.garam.whenwheremeet.domain.usecase.AggregatePlaceVotesUseCase
 import com.garam.whenwheremeet.presentation.state.MeetingRoomUiState
 import com.garam.whenwheremeet.presentation.state.toKoreanDate
-import kotlin.math.sqrt
 
 @Composable
 fun PlaceRecommendationTab(
@@ -52,13 +47,14 @@ fun PlaceRecommendationTab(
     onSearchLocations: (String) -> Unit,
     onUseCurrentLocation: () -> Unit,
     onSaveStartLocation: (LocationSearchResult) -> Unit,
-    onSaveTransportMode: (TransportMode) -> Unit,
-    onCalculateAreas: () -> Unit,
-    onSelectArea: (String) -> Unit,
-    onSearchPlaces: () -> Unit,
-    onVotePlace: (String, PlaceVoteType) -> Unit,
-    onConfirmPlace: (PlaceCandidate) -> Unit,
-    onOpenMap: (PlaceCandidate) -> Unit,
+    onSearchDestinationStations: (String) -> Unit,
+    onProposeDestinationStation: (LocationSearchResult) -> Unit,
+    onVoteDestinationStation: (String) -> Unit,
+    onConfirmDestinationStation: (String) -> Unit,
+    onConfirmWithoutPlace: () -> Unit,
+    onOpenDestinationRoute: (String) -> Unit,
+    onOpenConfirmedRoute: () -> Unit,
+    onAddToCalendar: () -> Unit,
     onShare: () -> Unit,
     isDesktop: Boolean = false,
 ) {
@@ -67,221 +63,175 @@ fun PlaceRecommendationTab(
         WwmEmptyState(text = "날짜 확정 후 이용할 수 있어요.\n먼저 모두가 가능한 날짜를 확정해주세요.")
         return
     }
+    if (room.status == MeetingStatus.MEETING_CONFIRMED) {
+        FinalMeetingWithoutPlaceCard(
+            dateText = room.confirmedDate.toKoreanDate(),
+            participantCount = state.participants.size,
+            onAddToCalendar = onAddToCalendar,
+            onShare = onShare,
+        )
+        return
+    }
     room.confirmedPlace?.let { place ->
-        FinalMeetingCard(
+        FinalStationCard(
             dateText = room.confirmedDate.toKoreanDate(),
             place = place,
             participantCount = state.participants.size,
-            onOpenMap = { onOpenMap(place) },
+            onAddToCalendar = onAddToCalendar,
+            onOpenRoute = onOpenConfirmedRoute,
             onShare = onShare,
         )
         return
     }
 
-    var showLocationDialog by remember { mutableStateOf(false) }
-    var expandedAreaId by remember { mutableStateOf<String?>(null) }
-    val allLocationsReady = state.participants.isNotEmpty() &&
-        state.startLocations.map { it.participantId }.toSet().size >= state.participants.size
-    val selectedArea = state.areaRecommendations.firstOrNull {
-        it.candidate.id == room.selectedAreaCandidateId
+    var showOriginSearch by remember { mutableStateOf(false) }
+    var showDestinationSearch by remember { mutableStateOf(false) }
+    var showConfirmWithoutPlace by remember { mutableStateOf(false) }
+    val currentParticipantId = state.currentParticipant.id
+    val currentProposal = state.destinationStationProposals.firstOrNull {
+        it.participantId == currentParticipantId
+    }
+    val currentVote = state.destinationStationVotes.firstOrNull {
+        it.participantId == currentParticipantId
+    }
+    val step = when {
+        state.currentStartLocation == null -> 1
+        currentProposal == null -> 2
+        else -> 3
     }
 
-    if (isDesktop) {
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(24.dp),
-            verticalAlignment = Alignment.Top,
-        ) {
-            Column(Modifier.width(300.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                SectionTitle("내 출발 정보")
-                StartLocationSection(
-                    state = state,
-                    onUseCurrentLocation = onUseCurrentLocation,
-                    onSaveTransportMode = onSaveTransportMode,
-                    onOpenLocationDialog = { showLocationDialog = true },
-                )
-                WwmInfoPanel(
-                    title = "내 위치는 안전하게 보호돼요",
-                    description = "정확한 위치는 추천 계산에만 사용하고 다른 참여자에게 노출하지 않아요.",
-                    icon = "🔒",
-                )
-                SectionTitle("입력 현황")
-                StartLocationStatus(state)
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        WwmStepProgress(
+            labels = listOf("출발역 입력", "후보역 제안", "투표·확정"),
+            currentStep = step,
+        )
+        OriginStationCard(
+            state = state,
+            onOpenSearch = { showOriginSearch = true },
+            onUseCurrentLocation = onUseCurrentLocation,
+        )
+        if (state.currentStartLocation != null) {
+            ProposalStationCard(
+                currentStationName = currentProposal?.station?.name,
+                onOpenSearch = { showDestinationSearch = true },
+            )
+            StationVotingSection(
+                state = state,
+                selectedStationId = currentVote?.stationId,
+                onVote = onVoteDestinationStation,
+                onOpenRoute = onOpenDestinationRoute,
+                onConfirm = onConfirmDestinationStation,
+            )
+        } else {
+            WwmEmptyState(
+                text = "내 출발역을 입력하면\n만나고 싶은 역을 제안할 수 있어요.",
+                icon = "1",
+            )
+        }
+        if (state.currentParticipant.isHost) {
+            WwmCard {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("장소는 나중에 정해도 돼요", fontWeight = FontWeight.Bold)
+                    Text(
+                        "날짜만으로 약속을 확정하면 참여자에게 장소 미정으로 표시돼요.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = WwmMuted,
+                    )
+                    WwmOutlineButton(
+                        text = "장소 없이 약속 확정",
+                        onClick = { showConfirmWithoutPlace = true },
+                    )
+                }
             }
-            PlaceDecisionContent(
-                state = state,
-                allLocationsReady = allLocationsReady,
-                selectedArea = selectedArea,
-                expandedAreaId = expandedAreaId,
-                onExpandedAreaChange = { expandedAreaId = it },
-                onCalculateAreas = onCalculateAreas,
-                onSelectArea = onSelectArea,
-                onSearchPlaces = onSearchPlaces,
-                onVotePlace = onVotePlace,
-                onConfirmPlace = onConfirmPlace,
-                onOpenMap = onOpenMap,
-                modifier = Modifier.weight(1f),
-            )
-        }
-    } else {
-        Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            SectionTitle("내 출발 정보")
-            StartLocationSection(
-                state = state,
-                onUseCurrentLocation = onUseCurrentLocation,
-                onSaveTransportMode = onSaveTransportMode,
-                onOpenLocationDialog = { showLocationDialog = true },
-            )
-            WwmInfoPanel(
-                title = "내 위치는 안전하게 보호돼요",
-                description = "정확한 좌표와 주소는 추천 계산에만 사용하고, 다른 참여자에게는 출발 지역 이름과 예상 시간만 보여줘요.",
-                icon = "🔒",
-            )
-            SectionTitle("입력 현황")
-            StartLocationStatus(state)
-            PlaceDecisionContent(
-                state = state,
-                allLocationsReady = allLocationsReady,
-                selectedArea = selectedArea,
-                expandedAreaId = expandedAreaId,
-                onExpandedAreaChange = { expandedAreaId = it },
-                onCalculateAreas = onCalculateAreas,
-                onSelectArea = onSelectArea,
-                onSearchPlaces = onSearchPlaces,
-                onVotePlace = onVotePlace,
-                onConfirmPlace = onConfirmPlace,
-                onOpenMap = onOpenMap,
-            )
         }
     }
 
-    if (showLocationDialog) {
-        LocationSearchDialog(
+    if (showOriginSearch) {
+        StationSearchDialog(
+            title = "내 출발역 검색",
+            helperText = "정확한 주소나 좌표는 다른 참여자에게 공개되지 않아요.",
             results = state.locationSearchResults,
             onSearch = onSearchLocations,
             onSelect = {
                 onSaveStartLocation(it)
-                showLocationDialog = false
+                showOriginSearch = false
             },
-            onDismiss = { showLocationDialog = false },
+            onDismiss = { showOriginSearch = false },
+        )
+    }
+    if (showDestinationSearch) {
+        StationSearchDialog(
+            title = if (currentProposal == null) "만나고 싶은 역 제안" else "후보역 변경",
+            helperText = "각자 하나의 역을 제안할 수 있고 같은 역은 하나로 합쳐져요.",
+            results = state.destinationStationSearchResults,
+            onSearch = onSearchDestinationStations,
+            onSelect = {
+                onProposeDestinationStation(it)
+                showDestinationSearch = false
+            },
+            onDismiss = { showDestinationSearch = false },
+        )
+    }
+    if (showConfirmWithoutPlace) {
+        AlertDialog(
+            onDismissRequest = { showConfirmWithoutPlace = false },
+            title = { Text("장소 없이 확정할까요?") },
+            text = { Text("확정 후에도 날짜를 변경하면 다시 조율 상태로 돌아가요. 장소는 미정으로 공유됩니다.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showConfirmWithoutPlace = false
+                        onConfirmWithoutPlace()
+                    },
+                ) { Text("약속 확정", color = WwmIndigo) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showConfirmWithoutPlace = false }) { Text("취소") }
+            },
         )
     }
 }
 
 @Composable
-private fun PlaceDecisionContent(
+private fun OriginStationCard(
     state: MeetingRoomUiState,
-    allLocationsReady: Boolean,
-    selectedArea: AreaRecommendation?,
-    expandedAreaId: String?,
-    onExpandedAreaChange: (String?) -> Unit,
-    onCalculateAreas: () -> Unit,
-    onSelectArea: (String) -> Unit,
-    onSearchPlaces: () -> Unit,
-    onVotePlace: (String, PlaceVoteType) -> Unit,
-    onConfirmPlace: (PlaceCandidate) -> Unit,
-    onOpenMap: (PlaceCandidate) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val room = state.room
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        when {
-            !allLocationsReady -> WwmInfoPanel(
-                title = "모든 참여자의 입력을 기다리는 중",
-                description = "출발 정보가 모두 모이면 공정한 중간 지역을 추천해드려요.",
-                icon = "⏳",
-                accentColor = WwmOrange,
-            )
-
-            state.areaRecommendations.isEmpty() -> {
-                WwmInfoPanel(
-                    title = "이제 중간 지역을 찾을 수 있어요",
-                    description = "평균 이동 시간과 가장 오래 걸리는 사람의 시간을 함께 비교해요.",
-                    icon = "⚖️",
-                )
-                WwmPrimaryButton(
-                    text = if (state.isCalculatingAreas) "공정한 지역을 계산하는 중..." else "공정한 중간 지역 찾기",
-                    onClick = onCalculateAreas,
-                    enabled = !state.isCalculatingAreas,
-                )
-            }
-
-            else -> {
-                SectionTitle("공정한 중간 지역 TOP 3")
-                state.areaRecommendations.take(3).forEachIndexed { index, recommendation ->
-                    AreaRecommendationCard(
-                        rank = index + 1,
-                        recommendation = recommendation,
-                        expanded = expandedAreaId == recommendation.candidate.id,
-                        selected = room.selectedAreaCandidateId == recommendation.candidate.id,
-                        isHost = state.currentParticipant.isHost,
-                        onToggle = {
-                            onExpandedAreaChange(if (expandedAreaId == recommendation.candidate.id) null else recommendation.candidate.id)
-                        },
-                        onSelect = { onSelectArea(recommendation.candidate.id) },
-                    )
-                }
-                if (selectedArea == null) {
-                    WwmInfoPanel(
-                        title = if (state.currentParticipant.isHost) "모임 지역을 선택해주세요" else "방장이 모임 지역을 고르는 중이에요",
-                        description = if (state.currentParticipant.isHost) {
-                            "후보를 펼쳐 참여자별 이동 시간을 확인한 뒤 하나를 선택해주세요."
-                        } else {
-                            "선택이 끝나면 정확한 장소 후보에 투표할 수 있어요."
-                        },
-                        icon = "📍",
-                    )
-                } else {
-                    SelectedAreaPanel(selectedArea)
-                    SectionTitle("장소 투표")
-                    if (state.currentParticipant.isHost) WwmBadge("방장만 최종 장소를 확정할 수 있어요")
-                    if (state.placeCandidates.isEmpty()) {
-                        WwmPrimaryButton(
-                            text = if (state.isSearchingPlaces) "장소 후보를 찾는 중..." else "장소 후보 추천받기",
-                            onClick = onSearchPlaces,
-                            enabled = !state.isSearchingPlaces,
-                        )
-                    } else {
-                        state.placeCandidates.take(5).forEachIndexed { index, scoredPlace ->
-                            PlaceCandidateCard(
-                                rank = index + 1,
-                                scoredPlace = scoredPlace,
-                                state = state,
-                                onVote = { onVotePlace(scoredPlace.place.id, it) },
-                                onOpenMap = { onOpenMap(scoredPlace.place) },
-                                onConfirm = { onConfirmPlace(scoredPlace.place) },
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun StartLocationSection(
-    state: MeetingRoomUiState,
+    onOpenSearch: () -> Unit,
     onUseCurrentLocation: () -> Unit,
-    onSaveTransportMode: (TransportMode) -> Unit,
-    onOpenLocationDialog: () -> Unit,
 ) {
+    val locationByParticipant = state.startLocations.associateBy { it.participantId }
     WwmCard {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text("내 출발역", style = MaterialTheme.typography.labelLarge, color = WwmMuted)
+                    Text(
+                        state.currentStartLocation?.label ?: "아직 입력하지 않았어요",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+                WwmBadge(
+                    text = if (state.currentStartLocation == null) "1단계" else "입력 완료",
+                    containerColor = if (state.currentStartLocation == null) WwmSoftIndigo else Color(0xFFE9F8F2),
+                    contentColor = if (state.currentStartLocation == null) WwmIndigo else WwmMintText,
+                )
+            }
             Text(
-                text = state.currentStartLocation?.label ?: "출발 위치를 입력해주세요",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-            )
-            Text(
-                text = "가까운 역이나 주요 장소를 기준으로 입력하면 충분해요.",
+                "출발역 이름만 참여자에게 보이고 정확한 좌표는 경로를 열 때만 사용해요.",
                 style = MaterialTheme.typography.bodySmall,
                 color = WwmMuted,
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 WwmOutlineButton(
-                    text = if (state.currentStartLocation == null) "출발지 검색" else "출발지 수정",
-                    onClick = onOpenLocationDialog,
+                    text = if (state.currentStartLocation == null) "출발역 검색" else "출발역 수정",
+                    onClick = onOpenSearch,
                     modifier = Modifier.weight(1f),
                 )
                 WwmOutlineButton(
@@ -290,50 +240,26 @@ private fun StartLocationSection(
                     modifier = Modifier.weight(1f),
                 )
             }
-            Text("이동 수단", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                TransportMode.entries.filter { it != TransportMode.UNKNOWN }.forEach { mode ->
-                    FilterChip(
-                        selected = state.currentTransportMode == mode,
-                        onClick = { onSaveTransportMode(mode) },
-                        label = { Text(mode.label) },
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun StartLocationStatus(state: MeetingRoomUiState) {
-    val locationByParticipant = state.startLocations.associateBy { it.participantId }
-    WwmCard {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            state.participants.forEachIndexed { index, participant ->
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    Box(
-                        modifier = Modifier.size(34.dp).background(WwmSoftIndigo, CircleShape),
-                        contentAlignment = Alignment.Center,
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                state.participants.forEach { participant ->
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        Text(participant.nickname.take(1), color = WwmIndigo, fontWeight = FontWeight.Bold)
+                        Box(
+                            Modifier.size(32.dp).background(WwmSoftIndigo, CircleShape),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(participant.nickname.take(1), color = WwmIndigo, fontWeight = FontWeight.Bold)
+                        }
+                        Text(participant.nickname, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                        WwmBadge(
+                            text = locationByParticipant[participant.id]?.label ?: "미입력",
+                            containerColor = if (locationByParticipant[participant.id] == null) WwmSurfaceSubtle else Color(0xFFE9F8F2),
+                            contentColor = if (locationByParticipant[participant.id] == null) WwmMuted else WwmMintText,
+                        )
                     }
-                    Column(Modifier.weight(1f)) {
-                        Text(participant.nickname, fontWeight = FontWeight.SemiBold)
-                        if (participant.isHost) Text("방장", style = MaterialTheme.typography.labelSmall, color = WwmMuted)
-                    }
-                    val location = locationByParticipant[participant.id]
-                    WwmBadge(
-                        text = location?.label ?: "미입력",
-                        containerColor = if (location == null) WwmSurfaceSubtle else Color(0xFFE9F8F2),
-                        contentColor = if (location == null) WwmMuted else WwmMintText,
-                    )
-                }
-                if (index != state.participants.lastIndex) {
-                    Spacer(Modifier.height(4.dp))
                 }
             }
         }
@@ -341,274 +267,264 @@ private fun StartLocationStatus(state: MeetingRoomUiState) {
 }
 
 @Composable
-private fun AreaRecommendationCard(
-    rank: Int,
-    recommendation: AreaRecommendation,
-    expanded: Boolean,
-    selected: Boolean,
-    isHost: Boolean,
-    onToggle: () -> Unit,
-    onSelect: () -> Unit,
-) {
-    val difference = recommendation.maxTravelMinutes - recommendation.minTravelMinutes
-    val deviation = sqrt(recommendation.travelTimeVariance)
-    val differenceLabel = when {
-        deviation < 8 -> "매우 공평"
-        deviation < 15 -> "균형적"
-        else -> "차이 있음"
+private fun ProposalStationCard(currentStationName: String?, onOpenSearch: () -> Unit) {
+    WwmCard {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text("내가 제안한 후보역", style = MaterialTheme.typography.labelLarge, color = WwmMuted)
+                    Text(
+                        currentStationName ?: "만나고 싶은 역을 골라주세요",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+                WwmBadge(if (currentStationName == null) "2단계" else "제안 완료")
+            }
+            Text(
+                "역 목록을 둘러보거나 이름으로 검색할 수 있어요.",
+                style = MaterialTheme.typography.bodySmall,
+                color = WwmMuted,
+            )
+            WwmPrimaryButton(
+                text = if (currentStationName == null) "후보역 선택하기" else "후보역 변경하기",
+                onClick = onOpenSearch,
+            )
+        }
     }
-    val containerColor = when {
-        selected -> Color(0xFFE9F8F2)
-        rank == 1 -> WwmSoftIndigo
-        else -> Color.White
-    }
+}
 
+@Composable
+private fun StationVotingSection(
+    state: MeetingRoomUiState,
+    selectedStationId: String?,
+    onVote: (String) -> Unit,
+    onOpenRoute: (String) -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    val options = state.destinationStationOptions
+    val totalVoters = state.destinationStationVotes.map { it.participantId }.distinct().size
+    val topVoteCount = options.maxOfOrNull { it.voteCount } ?: 0
+    val leadingCount = options.count { topVoteCount > 0 && it.voteCount == topVoteCount }
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("후보역 투표", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text("한 곳만 선택하며 언제든 바꿀 수 있어요.", style = MaterialTheme.typography.bodySmall, color = WwmMuted)
+            }
+            WwmBadge("$totalVoters/${state.participants.size}명 투표")
+        }
+        if (options.isEmpty()) {
+            WwmEmptyState(text = "아직 제안된 후보역이 없어요.\n첫 번째 후보역을 제안해주세요.", icon = "2")
+        } else {
+            options.forEach { option ->
+                DestinationStationCard(
+                    option = option,
+                    proposerNames = option.proposerParticipantIds.mapNotNull { participantId ->
+                        state.participants.firstOrNull { it.id == participantId }?.nickname
+                    },
+                    totalParticipants = state.participants.size,
+                    selected = selectedStationId == option.station.id,
+                    leading = topVoteCount > 0 && option.voteCount == topVoteCount,
+                    tied = leadingCount > 1,
+                    onVote = { onVote(option.station.id) },
+                    onOpenRoute = { onOpenRoute(option.station.id) },
+                )
+            }
+        }
+        if (state.currentParticipant.isHost) {
+            WwmPrimaryButton(
+                text = "이 역으로 확정",
+                onClick = { selectedStationId?.let(onConfirm) },
+                enabled = selectedStationId != null,
+            )
+            if (selectedStationId == null) {
+                Text(
+                    "방장도 후보역을 선택한 뒤 확정할 수 있어요.",
+                    modifier = Modifier.fillMaxWidth(),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = WwmMuted,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DestinationStationCard(
+    option: DestinationStationOption,
+    proposerNames: List<String>,
+    totalParticipants: Int,
+    selected: Boolean,
+    leading: Boolean,
+    tied: Boolean,
+    onVote: () -> Unit,
+    onOpenRoute: () -> Unit,
+) {
+    val borderColor = when {
+        selected -> WwmIndigo
+        leading -> WwmIndigo.copy(alpha = 0.7f)
+        else -> WwmBorder
+    }
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(containerColor, RoundedCornerShape(16.dp))
-            .border(
-                width = if (selected || rank == 1) 1.5.dp else 1.dp,
-                color = if (selected) WwmMint else if (rank == 1) WwmIndigo else WwmBorder,
-                shape = RoundedCornerShape(16.dp),
-            )
-            .clickable(onClick = onToggle)
+            .background(if (selected) WwmSoftIndigo.copy(alpha = 0.55f) else Color.White, RoundedCornerShape(16.dp))
+            .border(if (selected || leading) 1.5.dp else 1.dp, borderColor, RoundedCornerShape(16.dp))
+            .clickable(onClick = onVote)
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Box(
-                modifier = Modifier.size(30.dp).background(if (rank == 1) WwmIndigo else WwmSurfaceSubtle, CircleShape),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text("$rank", color = if (rank == 1) Color.White else WwmText, fontWeight = FontWeight.Bold)
-            }
-            Column(Modifier.weight(1f)) {
-                Text(recommendation.candidate.displayName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                Text(recommendation.candidate.tags.take(2).joinToString(" · "), style = MaterialTheme.typography.bodySmall, color = WwmMuted)
-            }
-            if (selected) WwmBadge("선택됨", containerColor = WwmMint, contentColor = Color.White)
-            else if (rank == 1) WwmBadge("가장 공평")
-        }
-
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            AreaMetric("평균", "${recommendation.averageTravelMinutes}분", Modifier.weight(1f))
-            AreaMetric("최대", "${recommendation.maxTravelMinutes}분", Modifier.weight(1f))
-            AreaMetric("격차", "$differenceLabel · ${difference}분", Modifier.weight(1.35f))
-        }
-        Text(recommendation.recommendationReason, style = MaterialTheme.typography.bodySmall, color = WwmMuted)
-
-        if (expanded) {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                recommendation.participantTravelTimes.forEach { travelTime ->
-                    TravelTimeRow(
-                        nickname = travelTime.participantNickname,
-                        minutes = travelTime.travelMinutes,
-                        maxMinutes = recommendation.maxTravelMinutes.coerceAtLeast(1),
-                    )
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(option.station.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    if (leading) WwmBadge(if (tied) "공동 최다 득표" else "최다 득표")
                 }
-            }
-            if (isHost && !selected) {
-                WwmPrimaryButton(text = "이 지역으로 선택", onClick = onSelect)
-            }
-        } else {
-            Text("참여자별 예상 시간 보기", style = MaterialTheme.typography.labelMedium, color = WwmIndigo)
-        }
-    }
-}
-
-@Composable
-private fun AreaMetric(label: String, value: String, modifier: Modifier = Modifier) {
-    Column(
-        modifier = modifier.background(Color.White.copy(alpha = 0.72f), RoundedCornerShape(12.dp)).padding(10.dp),
-        verticalArrangement = Arrangement.spacedBy(2.dp),
-    ) {
-        Text(label, style = MaterialTheme.typography.labelSmall, color = WwmMuted)
-        Text(value, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
-    }
-}
-
-@Composable
-private fun TravelTimeRow(nickname: String, minutes: Int, maxMinutes: Int) {
-    val fraction = (minutes.toFloat() / maxMinutes.toFloat()).coerceIn(0.08f, 1f)
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(nickname, modifier = Modifier.weight(0.75f), style = MaterialTheme.typography.bodySmall)
-        Box(
-            modifier = Modifier.weight(1.5f).height(7.dp).background(WwmSurfaceSubtle, CircleShape),
-        ) {
-            Box(Modifier.fillMaxWidth(fraction).height(7.dp).background(WwmIndigo, CircleShape))
-        }
-        Text("약 ${minutes}분", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
-    }
-}
-
-@Composable
-private fun SelectedAreaPanel(recommendation: AreaRecommendation) {
-    WwmInfoPanel(
-        title = "모임 지역 · ${recommendation.candidate.displayName}",
-        description = "평균 ${recommendation.averageTravelMinutes}분, 가장 오래 걸려도 ${recommendation.maxTravelMinutes}분이에요.",
-        icon = "✓",
-        accentColor = WwmMint,
-    )
-}
-
-@Composable
-private fun PlaceCandidateCard(
-    rank: Int,
-    scoredPlace: ScoredPlaceCandidate,
-    state: MeetingRoomUiState,
-    onVote: (PlaceVoteType) -> Unit,
-    onOpenMap: () -> Unit,
-    onConfirm: () -> Unit,
-) {
-    val place = scoredPlace.place
-    val summary = remember(place.id, state.placeVotes) {
-        AggregatePlaceVotesUseCase()(place.id, state.placeVotes)
-    }
-    val myVote = state.placeVotes.firstOrNull {
-        it.placeId == place.id && it.participantId == state.currentParticipant.id
-    }?.voteType
-
-    WwmCard {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Box(
-                    modifier = Modifier.size(30.dp).background(if (rank == 1) WwmIndigo else WwmSurfaceSubtle, CircleShape),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text("$rank", color = if (rank == 1) Color.White else WwmText, fontWeight = FontWeight.Bold)
-                }
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Text(place.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Text(place.category.label, style = MaterialTheme.typography.bodySmall, color = WwmMuted)
-                }
-                if (rank == 1) WwmBadge("추천")
-            }
-
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                place.rating?.let { Text("★ $it", style = MaterialTheme.typography.labelMedium, color = WwmOrange) }
-                place.reviewCount?.let { Text("리뷰 ${it}개", style = MaterialTheme.typography.labelMedium, color = WwmMuted) }
-                place.openingHoursSummary?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = WwmMintText) }
-            }
-            Text(place.roadAddress ?: place.address ?: "주소 정보 없음", style = MaterialTheme.typography.bodySmall, color = WwmMuted)
-            scoredPlace.reasons.take(2).forEach { reason ->
-                Text("• $reason", style = MaterialTheme.typography.bodySmall)
-            }
-
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                PlaceVoteType.entries.forEach { voteType ->
-                    FilterChip(
-                        selected = myVote == voteType,
-                        onClick = { onVote(voteType) },
-                        label = { Text(voteType.label) },
-                    )
-                }
-            }
-            Text(
-                text = "좋아요 ${summary.likeCount} · 괜찮아요 ${summary.neutralCount} · 별로예요 ${summary.dislikeCount}",
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                WwmOutlineButton(
-                    text = "지도 보기",
-                    onClick = onOpenMap,
-                    enabled = place.mapUrl != null,
-                    modifier = Modifier.weight(1f),
+                Text(
+                    "${proposerNames.joinToString(", ").ifBlank { "참여자" }} 제안 · ${option.station.region}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = WwmMuted,
                 )
-                if (state.currentParticipant.isHost) {
-                    WwmPrimaryButton(
-                        text = "이 장소로 확정",
-                        onClick = onConfirm,
-                        modifier = Modifier.weight(1.4f),
-                    )
-                }
+            }
+            Column(horizontalAlignment = Alignment.End) {
+                Text("${option.voteCount}/${totalParticipants}명", color = WwmIndigo, fontWeight = FontWeight.Bold)
+                RadioButton(selected = selected, onClick = onVote)
             }
         }
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            option.station.lines.take(4).forEach { line ->
+                WwmBadge(text = line, containerColor = WwmSurfaceSubtle, contentColor = WwmText)
+            }
+        }
+        WwmOutlineButton(
+            text = "카카오맵에서 경로·시간 보기",
+            onClick = onOpenRoute,
+            modifier = Modifier.fillMaxWidth(),
+        )
     }
 }
 
 @Composable
-private fun FinalMeetingCard(
-    dateText: String,
-    place: PlaceCandidate,
-    participantCount: Int,
-    onOpenMap: () -> Unit,
-    onShare: () -> Unit,
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(WwmSoftIndigo, RoundedCornerShape(20.dp))
-            .border(1.dp, WwmIndigo.copy(alpha = 0.28f), RoundedCornerShape(20.dp))
-            .padding(20.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Box(Modifier.size(48.dp).background(WwmIndigo, CircleShape), contentAlignment = Alignment.Center) {
-            Text("✓", color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-        }
-        Text("약속이 확정됐어요", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-        Text(dateText, style = MaterialTheme.typography.titleMedium)
-        Text(place.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-        Text(place.roadAddress ?: place.address ?: "주소 정보 없음", style = MaterialTheme.typography.bodySmall, color = WwmMuted)
-        WwmBadge("참여자 ${participantCount}명")
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            WwmOutlineButton(
-                text = "지도 보기",
-                onClick = onOpenMap,
-                enabled = place.mapUrl != null,
-                modifier = Modifier.weight(1f),
-            )
-            WwmPrimaryButton(text = "약속 공유", onClick = onShare, modifier = Modifier.weight(1f))
-        }
-    }
-}
-
-@Composable
-private fun LocationSearchDialog(
+private fun StationSearchDialog(
+    title: String,
+    helperText: String,
     results: List<LocationSearchResult>,
     onSearch: (String) -> Unit,
     onSelect: (LocationSearchResult) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var query by remember { mutableStateOf("") }
-    val keyboardController = LocalSoftwareKeyboardController.current
-    val searchKeyboardActions = KeyboardActions(
-        onDone = {
-            onSearch(query)
-            keyboardController?.hide()
-        },
-    )
+    LaunchedEffect(Unit) { onSearch("") }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("출발 위치 검색") },
+        title = { Text(title) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(
+                Modifier.heightIn(max = 430.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(helperText, style = MaterialTheme.typography.bodySmall, color = WwmMuted)
                 OutlinedTextField(
                     value = query,
-                    onValueChange = { query = it },
-                    label = { Text("역 또는 주요 장소") },
+                    onValueChange = {
+                        query = it
+                        onSearch(it)
+                    },
+                    label = { Text("역 이름 검색") },
+                    placeholder = { Text("예: 강남역, 홍대입구역") },
                     singleLine = true,
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                    keyboardActions = searchKeyboardActions,
                     modifier = Modifier.fillMaxWidth(),
                 )
-                WwmPrimaryButton(text = "검색", onClick = { onSearch(query) })
-                results.take(6).forEach { result ->
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(WwmSurfaceSubtle, RoundedCornerShape(12.dp))
-                            .clickable { onSelect(result) }
-                            .padding(12.dp),
-                    ) {
-                        Text(result.label, fontWeight = FontWeight.Bold)
-                        result.address?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = WwmMuted) }
+                Text(
+                    if (query.isBlank()) "추천 역" else "검색 결과",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = WwmMuted,
+                )
+                if (results.isEmpty()) {
+                    Text("일치하는 역이 없어요.", style = MaterialTheme.typography.bodyMedium, color = WwmMuted)
+                } else {
+                    results.take(10).forEach { result ->
+                        WwmCard(onClick = { onSelect(result) }) {
+                            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                Text(result.label, fontWeight = FontWeight.Bold)
+                                result.address?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = WwmMuted) }
+                            }
+                        }
                     }
                 }
+                Spacer(Modifier.height(2.dp))
             }
         },
-        confirmButton = { OutlinedButton(onClick = onDismiss) { Text("닫기") } },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("닫기") } },
     )
+}
+
+@Composable
+private fun FinalStationCard(
+    dateText: String,
+    place: PlaceCandidate,
+    participantCount: Int,
+    onAddToCalendar: () -> Unit,
+    onOpenRoute: () -> Unit,
+    onShare: () -> Unit,
+) {
+    WwmCard {
+        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Box(Modifier.size(40.dp).background(Color(0xFFE9F8F2), CircleShape), contentAlignment = Alignment.Center) {
+                    Text("✓", color = WwmMintText, fontWeight = FontWeight.Bold)
+                }
+                Column {
+                    Text("약속 장소가 확정됐어요", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text(dateText, style = MaterialTheme.typography.bodySmall, color = WwmMuted)
+                }
+            }
+            Text(place.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Text(
+                listOfNotNull(place.openingHoursSummary, place.address).joinToString(" · ").ifBlank { "역 정보" },
+                style = MaterialTheme.typography.bodySmall,
+                color = WwmMuted,
+            )
+            WwmBadge("참여자 ${participantCount}명")
+            WwmPrimaryButton(text = "카카오맵에서 내 경로 보기", onClick = onOpenRoute)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                WwmOutlineButton(text = "캘린더 추가", onClick = onAddToCalendar, modifier = Modifier.weight(1f))
+                WwmOutlineButton(text = "공유", onClick = onShare, modifier = Modifier.weight(1f))
+            }
+        }
+    }
+}
+
+@Composable
+private fun FinalMeetingWithoutPlaceCard(
+    dateText: String,
+    participantCount: Int,
+    onAddToCalendar: () -> Unit,
+    onShare: () -> Unit,
+) {
+    WwmCard {
+        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Box(Modifier.size(40.dp).background(Color(0xFFE9F8F2), CircleShape), contentAlignment = Alignment.Center) {
+                    Text("✓", color = WwmMintText, fontWeight = FontWeight.Bold)
+                }
+                Column {
+                    Text("약속이 확정됐어요", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text(dateText, style = MaterialTheme.typography.bodySmall, color = WwmMuted)
+                }
+            }
+            Text("장소 미정", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Text("장소를 정하지 않고 날짜와 참여자만으로 확정한 약속이에요.", style = MaterialTheme.typography.bodySmall, color = WwmMuted)
+            WwmBadge("참여자 ${participantCount}명")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                WwmOutlineButton(text = "캘린더 추가", onClick = onAddToCalendar, modifier = Modifier.weight(1f))
+                WwmOutlineButton(text = "공유", onClick = onShare, modifier = Modifier.weight(1f))
+            }
+        }
+    }
 }

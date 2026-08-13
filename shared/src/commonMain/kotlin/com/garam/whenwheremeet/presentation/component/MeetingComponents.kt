@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import com.garam.whenwheremeet.domain.model.AvailabilityStatus
 import com.garam.whenwheremeet.domain.model.DateAvailabilitySummary
 import com.garam.whenwheremeet.domain.model.MeetingRoom
+import com.garam.whenwheremeet.domain.model.isMeetingConfirmed
 import com.garam.whenwheremeet.presentation.state.toKoreanDate
 import kotlinx.datetime.LocalDate
 
@@ -42,39 +43,73 @@ fun AvailabilityCalendar(
     enabled: Boolean = true,
 ) {
     val summaryByDate = summaries.associateBy { it.date }
+    val calendarMonths = buildAvailabilityCalendarMonths(startDate, endDate)
+
+    WwmCard(modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+            calendarMonths.forEach { month ->
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = "${month.year}년 ${month.monthNumber}월",
+                        color = WwmText,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Row(Modifier.fillMaxWidth()) {
+                        listOf("일", "월", "화", "수", "목", "금", "토").forEach {
+                            Text(it, Modifier.weight(1f), style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
+                    val leading = (month.dates.first().dayOfWeek.ordinal + 1) % 7
+                    (List<LocalDate?>(leading) { null } + month.dates).chunked(7).forEach { week ->
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            week.forEach { date ->
+                                if (date == null) {
+                                    Spacer(Modifier.weight(1f).aspectRatio(0.8f))
+                                } else {
+                                    DateCell(
+                                        date = date,
+                                        status = selectedValues[date],
+                                        summary = summaryByDate[date],
+                                        onClick = { onDateClick(date) },
+                                        modifier = Modifier.weight(1f),
+                                        enabled = enabled,
+                                    )
+                                }
+                            }
+                            repeat(7 - week.size) { Spacer(Modifier.weight(1f).aspectRatio(0.8f)) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+internal data class AvailabilityCalendarMonth(
+    val year: Int,
+    val monthNumber: Int,
+    val dates: List<LocalDate>,
+)
+
+internal fun buildAvailabilityCalendarMonths(
+    startDate: LocalDate,
+    endDate: LocalDate,
+): List<AvailabilityCalendarMonth> {
+    if (endDate < startDate) return emptyList()
     val dates = generateSequence(startDate) { date ->
         runCatching { LocalDate.fromEpochDays(date.toEpochDays() + 1) }.getOrNull()
     }.takeWhile { it <= endDate }.toList()
 
-    WwmCard(modifier.fillMaxWidth()) {
-    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Row(Modifier.fillMaxWidth()) {
-            listOf("일", "월", "화", "수", "목", "금", "토").forEach {
-                Text(it, Modifier.weight(1f), style = MaterialTheme.typography.labelMedium)
-            }
+    return dates
+        .groupBy { it.year to (it.month.ordinal + 1) }
+        .map { (yearMonth, monthDates) ->
+            AvailabilityCalendarMonth(
+                year = yearMonth.first,
+                monthNumber = yearMonth.second,
+                dates = monthDates,
+            )
         }
-        val leading = (startDate.dayOfWeek.ordinal + 1) % 7
-        (List<LocalDate?>(leading) { null } + dates).chunked(7).forEach { week ->
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                week.forEach { date ->
-                    if (date == null) {
-                        Spacer(Modifier.weight(1f).aspectRatio(0.8f))
-                    } else {
-                        DateCell(
-                            date = date,
-                            status = selectedValues[date],
-                            summary = summaryByDate[date],
-                            onClick = { onDateClick(date) },
-                            modifier = Modifier.weight(1f),
-                            enabled = enabled,
-                        )
-                    }
-                }
-                repeat(7 - week.size) { Spacer(Modifier.weight(1f).aspectRatio(0.8f)) }
-            }
-        }
-    }
-    }
 }
 
 @Composable
@@ -144,10 +179,21 @@ private fun LegendItem(label: String, color: Color, modifier: Modifier = Modifie
 
 @Composable
 fun ConfirmedMeetingCard(room: MeetingRoom, participantCount: Int) {
+    val isFinal = room.status.isMeetingConfirmed
     WwmCard(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            StatusPill(if (room.confirmedPlace == null) "날짜 확정" else "장소 확정")
-            Text("약속이 확정됐어요", color = WwmMintText, style = MaterialTheme.typography.labelLarge)
+            StatusPill(
+                when {
+                    !isFinal -> "날짜 확정"
+                    room.confirmedPlace == null -> "약속 확정 · 장소 미정"
+                    else -> "장소 확정"
+                },
+            )
+            Text(
+                if (isFinal) "약속이 확정됐어요" else "날짜가 확정됐어요",
+                color = WwmMintText,
+                style = MaterialTheme.typography.labelLarge,
+            )
             Text(room.confirmedDate?.toKoreanDate().orEmpty(), color = WwmText, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
             Text("${room.title} · 참여자 ${participantCount}명", color = WwmMuted)
             Text("장소: ${room.confirmedPlace?.name ?: "미정"}", color = WwmMuted)

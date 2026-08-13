@@ -18,6 +18,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -28,6 +29,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
@@ -46,6 +48,7 @@ import com.garam.whenwheremeet.presentation.component.WwmPrimaryButton
 import com.garam.whenwheremeet.presentation.component.WwmSoftIndigo
 import com.garam.whenwheremeet.presentation.component.WwmText
 import com.garam.whenwheremeet.presentation.component.WwmTopBar
+import com.garam.whenwheremeet.domain.usecase.ExtractRoomCodeUseCase
 
 @Composable
 fun JoinRoomScreen(
@@ -56,6 +59,8 @@ fun JoinRoomScreen(
 ) {
     var roomCode by remember(initialRoomCode) { mutableStateOf(initialRoomCode.filter(Char::isLetterOrDigit).uppercase().take(6)) }
     var nickname by remember { mutableStateOf("") }
+    val clipboardManager = LocalClipboardManager.current
+    val extractRoomCode = remember { ExtractRoomCodeUseCase() }
     val keyboardController = LocalSoftwareKeyboardController.current
     val doneKeyboardActions = KeyboardActions(onDone = { keyboardController?.hide() })
     val canJoin = roomCode.length == 6 && nickname.isNotBlank()
@@ -79,7 +84,20 @@ fun JoinRoomScreen(
                 textAlign = TextAlign.Center,
             )
             Spacer(Modifier.height(30.dp))
-            Text("방 코드", color = WwmText, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.fillMaxWidth())
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("방 코드", color = WwmText, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                TextButton(
+                    onClick = {
+                        extractRoomCode(clipboardManager.getText()?.text.orEmpty())?.let { roomCode = it }
+                    },
+                ) {
+                    Text("붙여넣기", color = WwmIndigo)
+                }
+            }
             Spacer(Modifier.height(10.dp))
             RoomCodeField(
                 value = roomCode,

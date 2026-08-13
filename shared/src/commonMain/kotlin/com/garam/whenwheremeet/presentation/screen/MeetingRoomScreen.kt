@@ -34,9 +34,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.garam.whenwheremeet.domain.model.LocationSearchResult
 import com.garam.whenwheremeet.domain.model.MeetingStatus
-import com.garam.whenwheremeet.domain.model.TransportMode
-import com.garam.whenwheremeet.domain.model.PlaceCandidate
-import com.garam.whenwheremeet.domain.model.PlaceVoteType
+import com.garam.whenwheremeet.domain.model.isMeetingConfirmed
 import com.garam.whenwheremeet.presentation.component.AvailabilityCalendar
 import com.garam.whenwheremeet.presentation.component.AvailabilityLegend
 import com.garam.whenwheremeet.presentation.component.ConfirmedMeetingCard
@@ -83,13 +81,14 @@ fun MeetingRoomScreen(
     onSearchLocations: (String) -> Unit,
     onUseCurrentLocation: () -> Unit,
     onSaveStartLocation: (LocationSearchResult) -> Unit,
-    onSaveTransportMode: (TransportMode) -> Unit,
-    onCalculateAreas: () -> Unit,
-    onSelectArea: (String) -> Unit,
-    onSearchPlaces: () -> Unit,
-    onVotePlace: (String, PlaceVoteType) -> Unit,
-    onConfirmPlace: (PlaceCandidate) -> Unit,
-    onOpenMap: (PlaceCandidate) -> Unit,
+    onSearchDestinationStations: (String) -> Unit,
+    onProposeDestinationStation: (LocationSearchResult) -> Unit,
+    onVoteDestinationStation: (String) -> Unit,
+    onConfirmDestinationStation: (String) -> Unit,
+    onConfirmWithoutPlace: () -> Unit,
+    onOpenDestinationRoute: (String) -> Unit,
+    onOpenConfirmedRoute: () -> Unit,
+    onAddToCalendar: () -> Unit,
     onLeaveRoom: () -> Unit,
     onDeleteRoom: () -> Unit,
     modifier: Modifier = Modifier,
@@ -97,7 +96,7 @@ fun MeetingRoomScreen(
     val room = state.room
     var selectedTab by remember { mutableStateOf(MeetingRoomTab.DATE) }
     val currentFlowStep = when {
-        room.selectedAreaCandidateId != null -> 3
+        room.status.isMeetingConfirmed -> 3
         room.confirmedDate != null -> 2
         else -> 1
     }
@@ -110,7 +109,7 @@ fun MeetingRoomScreen(
                     val selectedSection = when (selectedTab) {
                         MeetingRoomTab.DATE -> WwmFlowSection.EVENT_DETAILS
                         MeetingRoomTab.PARTICIPANTS -> WwmFlowSection.PARTICIPANTS
-                        MeetingRoomTab.PLACE -> if (room.status == MeetingStatus.PLACE_CONFIRMED) {
+                        MeetingRoomTab.PLACE -> if (room.status.isMeetingConfirmed) {
                             WwmFlowSection.FINALIZE
                         } else {
                             WwmFlowSection.LOCATION_OPTIONS
@@ -139,13 +138,14 @@ fun MeetingRoomScreen(
                         onSearchLocations = onSearchLocations,
                         onUseCurrentLocation = onUseCurrentLocation,
                         onSaveStartLocation = onSaveStartLocation,
-                        onSaveTransportMode = onSaveTransportMode,
-                        onCalculateAreas = onCalculateAreas,
-                        onSelectArea = onSelectArea,
-                        onSearchPlaces = onSearchPlaces,
-                        onVotePlace = onVotePlace,
-                        onConfirmPlace = onConfirmPlace,
-                        onOpenMap = onOpenMap,
+                        onSearchDestinationStations = onSearchDestinationStations,
+                        onProposeDestinationStation = onProposeDestinationStation,
+                        onVoteDestinationStation = onVoteDestinationStation,
+                        onConfirmDestinationStation = onConfirmDestinationStation,
+                        onConfirmWithoutPlace = onConfirmWithoutPlace,
+                        onOpenDestinationRoute = onOpenDestinationRoute,
+                        onOpenConfirmedRoute = onOpenConfirmedRoute,
+                        onAddToCalendar = onAddToCalendar,
                         onShare = onShare,
                         onLeaveRoom = onLeaveRoom,
                         onDeleteRoom = onDeleteRoom,
@@ -175,13 +175,14 @@ fun MeetingRoomScreen(
                     onSearchLocations = onSearchLocations,
                     onUseCurrentLocation = onUseCurrentLocation,
                     onSaveStartLocation = onSaveStartLocation,
-                    onSaveTransportMode = onSaveTransportMode,
-                    onCalculateAreas = onCalculateAreas,
-                    onSelectArea = onSelectArea,
-                    onSearchPlaces = onSearchPlaces,
-                    onVotePlace = onVotePlace,
-                    onConfirmPlace = onConfirmPlace,
-                    onOpenMap = onOpenMap,
+                    onSearchDestinationStations = onSearchDestinationStations,
+                    onProposeDestinationStation = onProposeDestinationStation,
+                    onVoteDestinationStation = onVoteDestinationStation,
+                    onConfirmDestinationStation = onConfirmDestinationStation,
+                    onConfirmWithoutPlace = onConfirmWithoutPlace,
+                    onOpenDestinationRoute = onOpenDestinationRoute,
+                    onOpenConfirmedRoute = onOpenConfirmedRoute,
+                    onAddToCalendar = onAddToCalendar,
                     onShare = onShare,
                     onLeaveRoom = onLeaveRoom,
                     onDeleteRoom = onDeleteRoom,
@@ -206,13 +207,14 @@ private fun MeetingRoomContent(
     onSearchLocations: (String) -> Unit,
     onUseCurrentLocation: () -> Unit,
     onSaveStartLocation: (LocationSearchResult) -> Unit,
-    onSaveTransportMode: (TransportMode) -> Unit,
-    onCalculateAreas: () -> Unit,
-    onSelectArea: (String) -> Unit,
-    onSearchPlaces: () -> Unit,
-    onVotePlace: (String, PlaceVoteType) -> Unit,
-    onConfirmPlace: (PlaceCandidate) -> Unit,
-    onOpenMap: (PlaceCandidate) -> Unit,
+    onSearchDestinationStations: (String) -> Unit,
+    onProposeDestinationStation: (LocationSearchResult) -> Unit,
+    onVoteDestinationStation: (String) -> Unit,
+    onConfirmDestinationStation: (String) -> Unit,
+    onConfirmWithoutPlace: () -> Unit,
+    onOpenDestinationRoute: (String) -> Unit,
+    onOpenConfirmedRoute: () -> Unit,
+    onAddToCalendar: () -> Unit,
     onShare: () -> Unit,
     onLeaveRoom: () -> Unit,
     onDeleteRoom: () -> Unit,
@@ -233,7 +235,7 @@ private fun MeetingRoomContent(
                 Column(Modifier.width(320.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                     MeetingRoomHeader(state)
                     WwmStepProgress(
-                        labels = listOf("날짜 정하기", "중간 지역", "장소 투표"),
+                        labels = listOf("날짜 정하기", "출발역·후보역", "역 투표·확정"),
                         currentStep = currentFlowStep,
                     )
                     if (room.confirmedDate != null) ConfirmedMeetingCard(room, state.participants.size)
@@ -250,13 +252,14 @@ private fun MeetingRoomContent(
                         onSearchLocations = onSearchLocations,
                         onUseCurrentLocation = onUseCurrentLocation,
                         onSaveStartLocation = onSaveStartLocation,
-                        onSaveTransportMode = onSaveTransportMode,
-                        onCalculateAreas = onCalculateAreas,
-                        onSelectArea = onSelectArea,
-                        onSearchPlaces = onSearchPlaces,
-                        onVotePlace = onVotePlace,
-                        onConfirmPlace = onConfirmPlace,
-                        onOpenMap = onOpenMap,
+                        onSearchDestinationStations = onSearchDestinationStations,
+                        onProposeDestinationStation = onProposeDestinationStation,
+                        onVoteDestinationStation = onVoteDestinationStation,
+                        onConfirmDestinationStation = onConfirmDestinationStation,
+                        onConfirmWithoutPlace = onConfirmWithoutPlace,
+                        onOpenDestinationRoute = onOpenDestinationRoute,
+                        onOpenConfirmedRoute = onOpenConfirmedRoute,
+                        onAddToCalendar = onAddToCalendar,
                         onShare = onShare,
                         onLeaveRoom = onLeaveRoom,
                         onDeleteRoom = onDeleteRoom,
@@ -266,7 +269,7 @@ private fun MeetingRoomContent(
             }
         } else {
             MeetingRoomHeader(state)
-            WwmStepProgress(labels = listOf("날짜 정하기", "중간 지역", "장소 투표"), currentStep = currentFlowStep)
+            WwmStepProgress(labels = listOf("날짜 정하기", "출발역·후보역", "역 투표·확정"), currentStep = currentFlowStep)
             if (room.confirmedDate != null) ConfirmedMeetingCard(room, state.participants.size)
             MeetingRoomTabSelector(selectedTab = selectedTab, onSelectTab = onSelectTab)
             MeetingRoomSelectedTab(
@@ -279,13 +282,14 @@ private fun MeetingRoomContent(
                 onSearchLocations = onSearchLocations,
                 onUseCurrentLocation = onUseCurrentLocation,
                 onSaveStartLocation = onSaveStartLocation,
-                onSaveTransportMode = onSaveTransportMode,
-                onCalculateAreas = onCalculateAreas,
-                onSelectArea = onSelectArea,
-                onSearchPlaces = onSearchPlaces,
-                onVotePlace = onVotePlace,
-                onConfirmPlace = onConfirmPlace,
-                onOpenMap = onOpenMap,
+                onSearchDestinationStations = onSearchDestinationStations,
+                onProposeDestinationStation = onProposeDestinationStation,
+                onVoteDestinationStation = onVoteDestinationStation,
+                onConfirmDestinationStation = onConfirmDestinationStation,
+                onConfirmWithoutPlace = onConfirmWithoutPlace,
+                onOpenDestinationRoute = onOpenDestinationRoute,
+                onOpenConfirmedRoute = onOpenConfirmedRoute,
+                onAddToCalendar = onAddToCalendar,
                 onShare = onShare,
                 onLeaveRoom = onLeaveRoom,
                 onDeleteRoom = onDeleteRoom,
@@ -324,13 +328,14 @@ private fun MeetingRoomSelectedTab(
     onSearchLocations: (String) -> Unit,
     onUseCurrentLocation: () -> Unit,
     onSaveStartLocation: (LocationSearchResult) -> Unit,
-    onSaveTransportMode: (TransportMode) -> Unit,
-    onCalculateAreas: () -> Unit,
-    onSelectArea: (String) -> Unit,
-    onSearchPlaces: () -> Unit,
-    onVotePlace: (String, PlaceVoteType) -> Unit,
-    onConfirmPlace: (PlaceCandidate) -> Unit,
-    onOpenMap: (PlaceCandidate) -> Unit,
+    onSearchDestinationStations: (String) -> Unit,
+    onProposeDestinationStation: (LocationSearchResult) -> Unit,
+    onVoteDestinationStation: (String) -> Unit,
+    onConfirmDestinationStation: (String) -> Unit,
+    onConfirmWithoutPlace: () -> Unit,
+    onOpenDestinationRoute: (String) -> Unit,
+    onOpenConfirmedRoute: () -> Unit,
+    onAddToCalendar: () -> Unit,
     onShare: () -> Unit,
     onLeaveRoom: () -> Unit,
     onDeleteRoom: () -> Unit,
@@ -343,13 +348,14 @@ private fun MeetingRoomSelectedTab(
             onSearchLocations = onSearchLocations,
             onUseCurrentLocation = onUseCurrentLocation,
             onSaveStartLocation = onSaveStartLocation,
-            onSaveTransportMode = onSaveTransportMode,
-            onCalculateAreas = onCalculateAreas,
-            onSelectArea = onSelectArea,
-            onSearchPlaces = onSearchPlaces,
-            onVotePlace = onVotePlace,
-            onConfirmPlace = onConfirmPlace,
-            onOpenMap = onOpenMap,
+            onSearchDestinationStations = onSearchDestinationStations,
+            onProposeDestinationStation = onProposeDestinationStation,
+            onVoteDestinationStation = onVoteDestinationStation,
+            onConfirmDestinationStation = onConfirmDestinationStation,
+            onConfirmWithoutPlace = onConfirmWithoutPlace,
+            onOpenDestinationRoute = onOpenDestinationRoute,
+            onOpenConfirmedRoute = onOpenConfirmedRoute,
+            onAddToCalendar = onAddToCalendar,
             onShare = onShare,
             isDesktop = isDesktop,
         )
@@ -363,6 +369,7 @@ private fun MeetingRoomHeader(state: MeetingRoomUiState) {
     val statusText = when (room.status) {
         MeetingStatus.PLACE_SELECTING -> "장소 조율 중"
         MeetingStatus.PLACE_CONFIRMED -> "약속 확정"
+        MeetingStatus.MEETING_CONFIRMED -> "약속 확정 · 장소 미정"
         MeetingStatus.DATE_CONFIRMED -> "날짜 확정"
         else -> "날짜 조율 중"
     }
@@ -518,7 +525,10 @@ private fun ParticipantsTab(state: MeetingRoomUiState, onLeaveRoom: () -> Unit, 
                             }
                             Text(participant.nickname, color = WwmText)
                         }
-                        if (participant.isHost) WwmBadge("방장")
+                        when {
+                            participant.isHost -> WwmBadge("방장")
+                            participant.isInvited -> WwmBadge("초대됨")
+                        }
                     }
                     if (index < state.participants.lastIndex) HorizontalDivider(Modifier.padding(vertical = 8.dp))
                 }

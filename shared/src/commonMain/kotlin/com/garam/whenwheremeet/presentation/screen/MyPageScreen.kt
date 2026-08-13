@@ -15,22 +15,18 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -62,9 +58,6 @@ import com.garam.whenwheremeet.presentation.component.WwmTopBar
 @Composable
 fun MyPageScreen(
     authSession: AuthSession?,
-    showAppleSignIn: Boolean,
-    onGoogleSignIn: () -> Unit,
-    onAppleSignIn: () -> Unit,
     onOpenFeedback: () -> Unit,
     onOpenTerms: () -> Unit,
     onOpenPrivacy: () -> Unit,
@@ -76,9 +69,7 @@ fun MyPageScreen(
     modifier: Modifier = Modifier,
 ) {
     var selectedTheme by remember { mutableStateOf(ScreenMode.Light) }
-    var showLoginSheet by remember { mutableStateOf(false) }
     var destination by remember { mutableStateOf(SettingsDestination.Main) }
-    val isAnonymous = authSession?.isAnonymous != false
 
     PlatformBackHandler(enabled = destination != SettingsDestination.Main) {
         destination = SettingsDestination.Main
@@ -91,9 +82,7 @@ fun MyPageScreen(
                 if (isDesktop) {
                     DesktopSettingsMainContent(
                         authSession = authSession,
-                        isAnonymous = isAnonymous,
                         selectedMode = selectedTheme,
-                        onOpenLogin = { showLoginSheet = true },
                         onOpenAccount = { destination = SettingsDestination.Account },
                         onOpenFeedback = onOpenFeedback,
                         onOpenScreenMode = { destination = SettingsDestination.ScreenMode },
@@ -106,9 +95,7 @@ fun MyPageScreen(
                 } else {
                     SettingsMainContent(
                         authSession = authSession,
-                        isAnonymous = isAnonymous,
                         selectedMode = selectedTheme,
-                        onOpenLogin = { showLoginSheet = true },
                         onOpenAccount = { destination = SettingsDestination.Account },
                         onOpenFeedback = onOpenFeedback,
                         onOpenScreenMode = { destination = SettingsDestination.ScreenMode },
@@ -147,29 +134,12 @@ fun MyPageScreen(
             }
         }
     }
-
-    if (showLoginSheet) {
-        SettingsLoginBottomSheet(
-            showAppleSignIn = showAppleSignIn,
-            onDismiss = { showLoginSheet = false },
-            onGoogleSignIn = {
-                showLoginSheet = false
-                onGoogleSignIn()
-            },
-            onAppleSignIn = {
-                showLoginSheet = false
-                onAppleSignIn()
-            },
-        )
-    }
 }
 
 @Composable
 private fun DesktopSettingsMainContent(
     authSession: AuthSession?,
-    isAnonymous: Boolean,
     selectedMode: ScreenMode,
-    onOpenLogin: () -> Unit,
     onOpenAccount: () -> Unit,
     onOpenFeedback: () -> Unit,
     onOpenScreenMode: () -> Unit,
@@ -202,34 +172,34 @@ private fun DesktopSettingsMainContent(
                                 contentAlignment = Alignment.Center,
                             ) {
                                 Text(
-                                    if (isAnonymous) "게" else (authSession?.email?.take(1)?.uppercase() ?: "나"),
+                                    authSession?.email?.take(1)?.uppercase() ?: "나",
                                     color = WwmIndigo,
                                     fontSize = 30.sp,
                                     fontWeight = FontWeight.Bold,
                                 )
                             }
                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Text(if (isAnonymous) "게스트 사용자" else "내 계정", color = WwmText, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                                Text("내 계정", color = WwmText, fontSize = 24.sp, fontWeight = FontWeight.Bold)
                                 Text(
-                                    if (isAnonymous) "로그인하면 약속을 안전하게 보관해요" else authSession?.email ?: "이메일 정보가 없어요",
+                                    authSession?.email ?: "이메일 정보가 없어요",
                                     color = WwmMuted,
                                 )
                             }
                         }
                         OutlinedButton(
-                            onClick = if (isAnonymous) onOpenLogin else onOpenAccount,
+                            onClick = onOpenAccount,
                             modifier = Modifier.fillMaxWidth().height(52.dp),
                             shape = RoundedCornerShape(14.dp),
                             border = BorderStroke(1.dp, WwmIndigo),
                             colors = ButtonDefaults.outlinedButtonColors(contentColor = WwmIndigo),
-                        ) { Text(if (isAnonymous) "로그인" else "프로필 수정", fontWeight = FontWeight.SemiBold) }
+                        ) { Text("프로필 수정", fontWeight = FontWeight.SemiBold) }
                     }
                 }
                 DesktopSettingsGroup("계정 관리") {
                     SettingsMenuItem(
                         title = "로그인 정보",
-                        description = if (isAnonymous) "로그인이 필요해요" else authSession?.email ?: "이메일 정보가 없어요",
-                        onClick = if (isAnonymous) onOpenLogin else onOpenAccount,
+                        description = authSession?.email ?: "이메일 정보가 없어요",
+                        onClick = onOpenAccount,
                     )
                 }
             }
@@ -274,9 +244,7 @@ private enum class ScreenMode(val label: String) {
 @Composable
 private fun SettingsMainContent(
     authSession: AuthSession?,
-    isAnonymous: Boolean,
     selectedMode: ScreenMode,
-    onOpenLogin: () -> Unit,
     onOpenAccount: () -> Unit,
     onOpenFeedback: () -> Unit,
     onOpenScreenMode: () -> Unit,
@@ -306,7 +274,7 @@ private fun SettingsMainContent(
                         contentAlignment = Alignment.Center,
                     ) {
                         Text(
-                            text = if (isAnonymous) "게" else (authSession?.email?.take(1)?.uppercase() ?: "나"),
+                            text = authSession?.email?.take(1)?.uppercase() ?: "나",
                             color = WwmIndigo,
                             fontSize = 20.sp,
                             fontWeight = FontWeight.Bold,
@@ -314,23 +282,23 @@ private fun SettingsMainContent(
                     }
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                         Text(
-                            text = if (isAnonymous) "게스트로 이용 중" else "내 계정",
+                            text = "내 계정",
                             color = WwmText,
                             fontSize = 18.sp,
                             fontWeight = FontWeight.Bold,
                         )
                         Text(
-                            text = if (isAnonymous) "로그인하면 약속을 안전하게 보관해요" else authSession?.email ?: "이메일 정보가 없어요",
+                            text = authSession?.email ?: "이메일 정보가 없어요",
                             color = WwmMuted,
                             fontSize = 13.sp,
                         )
                     }
                     Text(
-                        text = if (isAnonymous) "로그인" else ">",
+                        text = ">",
                         color = WwmIndigo,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.clickable(onClick = if (isAnonymous) onOpenLogin else onOpenAccount),
+                        modifier = Modifier.clickable(onClick = onOpenAccount),
                     )
                 }
             }
@@ -342,8 +310,8 @@ private fun SettingsMainContent(
                     ) {
                         SettingsMenuItem(
                             title = "로그인 정보",
-                            description = if (isAnonymous) "로그인이 필요해요" else authSession?.email ?: "이메일 정보가 없어요",
-                            onClick = if (isAnonymous) onOpenLogin else onOpenAccount,
+                            description = authSession?.email ?: "이메일 정보가 없어요",
+                            onClick = onOpenAccount,
                         )
                         SettingsDivider()
                         SettingsMenuItem(
@@ -514,32 +482,6 @@ private fun SettingsDivider() {
     )
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun SettingsLoginBottomSheet(
-    showAppleSignIn: Boolean,
-    onDismiss: () -> Unit,
-    onGoogleSignIn: () -> Unit,
-    onAppleSignIn: () -> Unit,
-) {
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        containerColor = Color.White,
-        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-    ) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Text("로그인하기", color = WwmText, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
-            Text("로그인하면 참여 중인 약속과 설정을 계정에 연결할 수 있어요.", color = WwmMuted, fontSize = 13.sp, lineHeight = 19.sp)
-            LoginButton(text = "Google로 계속하기", icon = "G", onClick = onGoogleSignIn)
-            if (showAppleSignIn) {
-                LoginButton(text = "Apple로 계속하기", icon = "A", dark = true, onClick = onAppleSignIn)
-            }
-            Spacer(Modifier.height(14.dp))
-        }
-    }
-}
-
 @Composable
 private fun SettingsActionButton(
     text: String,
@@ -557,23 +499,5 @@ private fun SettingsActionButton(
         ),
     ) {
         Text(text, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-    }
-}
-
-@Composable
-private fun LoginButton(text: String, icon: String, dark: Boolean = false, onClick: () -> Unit) {
-    OutlinedButton(
-        onClick = onClick,
-        modifier = Modifier.fillMaxWidth().height(44.dp),
-        shape = RoundedCornerShape(999.dp),
-        border = BorderStroke(1.dp, if (dark) Color.Black else WwmBorder),
-        colors = ButtonDefaults.outlinedButtonColors(
-            containerColor = if (dark) Color.Black else Color.White,
-            contentColor = if (dark) Color.White else WwmText,
-        ),
-    ) {
-        Text(icon, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.width(8.dp))
-        Text(text, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
     }
 }

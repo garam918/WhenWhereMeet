@@ -104,6 +104,14 @@ fun HomeScreen(
                                 InProgressMeetingCard(meeting = meeting, onOpenRoom = onOpenRoom)
                             }
                         }
+                        item { WwmSectionHeader("✓", "지난 약속") }
+                        if (state.pastMeetings.isEmpty()) {
+                            item { WwmEmptyState("지난 약속이 아직 없어요.") }
+                        } else {
+                            items(state.pastMeetings, key = { "past-${it.roomId}" }) { meeting ->
+                                PastMeetingCard(meeting = meeting, onOpenRoom = onOpenRoom)
+                            }
+                        }
                         item { Spacer(Modifier.height(8.dp)) }
                     }
                 }
@@ -176,6 +184,14 @@ private fun DesktopHomeContent(
             } else {
                 items(state.inProgressMeetings, key = { "desktop-progress-${it.roomId}" }) { meeting ->
                     InProgressMeetingCard(meeting = meeting, onOpenRoom = onOpenRoom)
+                }
+            }
+            item { WwmSectionHeader("✓", "지난 약속") }
+            if (state.pastMeetings.isEmpty()) {
+                item { WwmEmptyState("지난 약속이 아직 없어요.") }
+            } else {
+                items(state.pastMeetings, key = { "desktop-past-${it.roomId}" }) { meeting ->
+                    PastMeetingCard(meeting = meeting, onOpenRoom = onOpenRoom)
                 }
             }
         }
@@ -303,6 +319,24 @@ private fun InProgressMeetingCard(meeting: HomeMeetingCardUiModel, onOpenRoom: (
                 Text(meeting.ctaText, color = WwmIndigo, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                 Text("약속방 보기", color = WwmIndigo, fontSize = 13.sp)
             }
+        }
+    }
+}
+
+@Composable
+private fun PastMeetingCard(meeting: HomeMeetingCardUiModel, onOpenRoom: (String) -> Unit) {
+    WwmCard(Modifier.fillMaxWidth(), onClick = { onOpenRoom(meeting.roomId) }) {
+        Row(
+            Modifier.fillMaxWidth().padding(17.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                StatusPill(meeting.statusText)
+                Text(meeting.title, color = WwmText, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+                Text(meeting.dateText, color = WwmMuted, fontSize = 14.sp)
+            }
+            Text("상세 보기", color = WwmIndigo, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
         }
     }
 }

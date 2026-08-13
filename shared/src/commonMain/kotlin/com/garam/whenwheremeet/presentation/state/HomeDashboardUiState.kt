@@ -8,6 +8,7 @@ data class HomeDashboardUiState(
     val actionItems: List<HomeActionItemUiModel> = emptyList(),
     val upcomingConfirmedMeetings: List<HomeMeetingCardUiModel> = emptyList(),
     val inProgressMeetings: List<HomeMeetingCardUiModel> = emptyList(),
+    val pastMeetings: List<HomeMeetingCardUiModel> = emptyList(),
     val errorMessage: String? = null,
 )
 

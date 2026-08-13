@@ -16,16 +16,19 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -41,6 +44,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.garam.whenwheremeet.domain.model.MeetingType
+import com.garam.whenwheremeet.domain.model.FriendProfile
 import com.garam.whenwheremeet.domain.model.MAX_MEETING_PARTICIPANTS
 import com.garam.whenwheremeet.domain.model.MIN_MEETING_PARTICIPANTS
 import com.garam.whenwheremeet.platform.currentLocalDate
@@ -55,6 +59,7 @@ import com.garam.whenwheremeet.presentation.component.WwmMuted
 import com.garam.whenwheremeet.presentation.component.WwmPrimaryButton
 import com.garam.whenwheremeet.presentation.component.WwmSoftIndigo
 import com.garam.whenwheremeet.presentation.component.WwmStepProgress
+import com.garam.whenwheremeet.presentation.component.WwmSurfaceSubtle
 import com.garam.whenwheremeet.presentation.component.WwmText
 import com.garam.whenwheremeet.presentation.component.WwmTopBar
 import com.garam.whenwheremeet.presentation.state.CreateRoomInput
@@ -64,6 +69,7 @@ import kotlinx.datetime.plus
 
 @Composable
 fun CreateMeetingRoomScreen(
+    friends: List<FriendProfile>,
     onBack: () -> Unit,
     onCreate: (CreateRoomInput) -> Unit,
     modifier: Modifier = Modifier,
@@ -80,16 +86,23 @@ fun CreateMeetingRoomScreen(
     var selectedStartDate by remember { mutableStateOf(today) }
     var selectedEndDate by remember { mutableStateOf(today.plus(DatePeriod(days = 6))) }
     var maxParticipantsText by remember { mutableStateOf("6") }
+    var friendQuery by remember { mutableStateOf("") }
+    var selectedFriendIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var currentStep by remember { mutableIntStateOf(1) }
     val maxParticipants = maxParticipantsText.toIntOrNull()
     val isBasicInfoValid = hostNickname.isNotBlank() && title.isNotBlank()
     val isDateRangeValid = selectedStartDate >= today && selectedEndDate >= selectedStartDate
     val isParticipantCountValid = maxParticipants != null &&
         maxParticipants in MIN_MEETING_PARTICIPANTS..MAX_MEETING_PARTICIPANTS
+    val friendCapacity = ((maxParticipants ?: MIN_MEETING_PARTICIPANTS) - 1).coerceAtLeast(0)
     val canContinue = when (currentStep) {
         1 -> isBasicInfoValid
         2 -> isDateRangeValid
-        else -> isParticipantCountValid
+        else -> isParticipantCountValid && selectedFriendIds.size <= friendCapacity
+    }
+
+    LaunchedEffect(friends) {
+        selectedFriendIds = selectedFriendIds.intersect(friends.mapTo(mutableSetOf()) { it.userId })
     }
 
     BoxWithConstraints(modifier.fillMaxSize().background(WwmBackground)) {
@@ -242,6 +255,10 @@ fun CreateMeetingRoomScreen(
                                     digits.toIntOrNull() == null -> maxParticipantsText
                                     else -> digits.toInt().coerceAtMost(MAX_MEETING_PARTICIPANTS).toString()
                                 }
+                                val updatedCapacity = ((maxParticipantsText.toIntOrNull() ?: 1) - 1).coerceAtLeast(0)
+                                if (selectedFriendIds.size > updatedCapacity) {
+                                    selectedFriendIds = selectedFriendIds.take(updatedCapacity).toSet()
+                                }
                             },
                             label = { Text("최대 인원") },
                             supportingText = { Text("2~8명까지 설정할 수 있어요.") },
@@ -253,11 +270,28 @@ fun CreateMeetingRoomScreen(
                         )
                         WwmInfoPanel("방장은 필수 참여자예요", "약속을 만든 뒤 초대 링크나 방 코드로 참여자를 불러보세요.", icon = "✓")
                     }
+                    FriendInvitationSection(
+                        friends = friends,
+                        query = friendQuery,
+                        onQueryChange = { friendQuery = it },
+                        selectedFriendIds = selectedFriendIds,
+                        maxParticipants = maxParticipants ?: MIN_MEETING_PARTICIPANTS,
+                        onToggleFriend = { friend ->
+                            selectedFriendIds = if (friend.userId in selectedFriendIds) {
+                                selectedFriendIds - friend.userId
+                            } else if (selectedFriendIds.size < friendCapacity) {
+                                selectedFriendIds + friend.userId
+                            } else {
+                                selectedFriendIds
+                            }
+                        },
+                    )
                     FormCard("입력 정보 요약") {
                         SummaryRow("약속", title)
                         SummaryRow("모임 성격", meetingType.label)
                         SummaryRow("후보 기간", "${selectedStartDate.toDateLabel()} ~ ${selectedEndDate.toDateLabel()}")
                         SummaryRow("최대 인원", "${maxParticipants ?: "-"}명")
+                        SummaryRow("친구 초대", "${selectedFriendIds.size}명")
                     }
                 }
                     }
@@ -277,7 +311,11 @@ fun CreateMeetingRoomScreen(
                         )
                     }
                     WwmPrimaryButton(
-                        text = if (currentStep < 3) "다음으로" else "약속방 만들기",
+                        text = when {
+                            currentStep < 3 -> "다음으로"
+                            selectedFriendIds.isNotEmpty() -> "친구 ${selectedFriendIds.size}명 초대하고 만들기"
+                            else -> "약속방 만들기"
+                        },
                         onClick = {
                             if (currentStep < 3) {
                                 currentStep += 1
@@ -293,12 +331,113 @@ fun CreateMeetingRoomScreen(
                                         minParticipants = 1,
                                         maxParticipants = maxParticipants ?: MIN_MEETING_PARTICIPANTS,
                                         responseDeadline = null,
+                                        invitedFriendIds = selectedFriendIds,
                                     ),
                                 )
                             }
                         },
                         modifier = Modifier.weight(if (currentStep > 1) 1.7f else 1f),
                         enabled = canContinue,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FriendInvitationSection(
+    friends: List<FriendProfile>,
+    query: String,
+    onQueryChange: (String) -> Unit,
+    selectedFriendIds: Set<String>,
+    maxParticipants: Int,
+    onToggleFriend: (FriendProfile) -> Unit,
+) {
+    val normalizedQuery = query.trim()
+    val filteredFriends = friends.filter {
+        normalizedQuery.isBlank() || it.nickname.contains(normalizedQuery, ignoreCase = true)
+    }
+    val selectedFriends = friends.filter { it.userId in selectedFriendIds }
+    val friendCapacity = (maxParticipants - 1).coerceAtLeast(0)
+
+    FormCard(
+        title = "함께할 친구를 초대해보세요",
+        subtitle = "친구 ${selectedFriendIds.size}명 선택 · 방장 포함 ${selectedFriendIds.size + 1}/${maxParticipants}명",
+    ) {
+        WwmInfoPanel(
+            title = "함께한 사람은 자동으로 친구가 돼요",
+            description = "같은 약속에 실제로 참여한 뒤 친구 목록에 추가돼요. 주소나 위치 정보는 저장하지 않아요.",
+            icon = "i",
+        )
+        if (selectedFriends.isNotEmpty()) {
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                selectedFriends.forEach { friend ->
+                    FilterChip(
+                        selected = true,
+                        onClick = { onToggleFriend(friend) },
+                        label = { Text("${friend.nickname}  ×") },
+                    )
+                }
+            }
+        }
+        OutlinedTextField(
+            value = query,
+            onValueChange = onQueryChange,
+            label = { Text("친구에서 초대") },
+            placeholder = { Text("이름으로 검색") },
+            singleLine = true,
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        when {
+            friends.isEmpty() -> WwmInfoPanel(
+                title = "아직 친구가 없어요",
+                description = "초대 링크나 방 코드로 함께 약속에 참여하면 다음부터 여기에서 바로 초대할 수 있어요.",
+                icon = "+",
+            )
+            filteredFriends.isEmpty() -> Text(
+                "검색 결과가 없어요.",
+                color = WwmMuted,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            else -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                filteredFriends.forEach { friend ->
+                    val selected = friend.userId in selectedFriendIds
+                    val enabled = selected || selectedFriendIds.size < friendCapacity
+                    Row(
+                        Modifier.fillMaxWidth()
+                            .background(WwmSurfaceSubtle, androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+                            .clickable(enabled = enabled) { onToggleFriend(friend) }
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Box(
+                            Modifier.size(36.dp).background(WwmSoftIndigo, androidx.compose.foundation.shape.CircleShape),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(friend.nickname.take(1), color = WwmIndigo, fontWeight = FontWeight.Bold)
+                        }
+                        Column(Modifier.weight(1f)) {
+                            Text(friend.nickname, color = WwmText, fontWeight = FontWeight.SemiBold)
+                            Text("함께한 약속 ${friend.sharedMeetingCount}회", color = WwmMuted, fontSize = 12.sp)
+                        }
+                        Checkbox(
+                            checked = selected,
+                            onCheckedChange = { onToggleFriend(friend) },
+                            enabled = enabled,
+                        )
+                    }
+                }
+                if (selectedFriendIds.size >= friendCapacity && filteredFriends.any { it.userId !in selectedFriendIds }) {
+                    Text(
+                        "최대 인원에 도달했어요. 다른 친구를 선택하려면 먼저 한 명을 해제해주세요.",
+                        color = WwmMuted,
+                        fontSize = 12.sp,
                     )
                 }
             }

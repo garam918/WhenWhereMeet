@@ -44,7 +44,6 @@ fun OnboardingScreen(
     showAppleSignIn: Boolean,
     onGoogleSignIn: () -> Unit,
     onAppleSignIn: () -> Unit,
-    onStartWithoutLogin: () -> Unit,
     onOpenUrl: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -87,15 +86,9 @@ fun OnboardingScreen(
             Spacer(Modifier.height(10.dp))
         }
         LoginButton(text = "Google로 계속하기", icon = "G", onClick = onGoogleSignIn)
+        Spacer(Modifier.height(14.dp))
         Text(
-            "게스트로 시작하기",
-            color = WwmIndigo,
-            fontSize = 14.sp,
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.clickable(onClick = onStartWithoutLogin).padding(horizontal = 16.dp, vertical = 18.dp),
-        )
-        Text(
-            "게스트도 방 코드와 닉네임만으로 바로 참여할 수 있어요.",
+            "약속을 안전하게 보관하고 모든 기기에서 불러오려면 로그인이 필요해요.",
             color = WwmMuted,
             fontSize = 12.sp,
             textAlign = TextAlign.Center,
