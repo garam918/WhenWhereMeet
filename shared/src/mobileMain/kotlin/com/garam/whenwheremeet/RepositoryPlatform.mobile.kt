@@ -20,7 +20,3 @@ actual fun currentAuthSession(): AuthSession? {
         providerId = user.providerId,
     )
 }
-
-actual fun initialRoomCodeFromLaunch(): String? = null
-
-actual fun buildRoomJoinLink(roomId: String): String = "whenwheremeet://room/$roomId"

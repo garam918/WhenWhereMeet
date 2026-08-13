@@ -2,15 +2,16 @@ package com.garam.whenwheremeet.domain.usecase
 
 import com.garam.whenwheremeet.domain.model.AreaRecommendation
 import com.garam.whenwheremeet.domain.model.Availability
+import com.garam.whenwheremeet.domain.model.DestinationStationProposal
+import com.garam.whenwheremeet.domain.model.DestinationStationVote
 import com.garam.whenwheremeet.domain.model.MeetingRoom
 import com.garam.whenwheremeet.domain.model.MeetingStatus
 import com.garam.whenwheremeet.domain.model.Participant
 import com.garam.whenwheremeet.domain.model.PlaceVote
 import com.garam.whenwheremeet.domain.model.ScoredPlaceCandidate
 import com.garam.whenwheremeet.domain.model.UserStartLocation
-import kotlinx.datetime.DatePeriod
+import com.garam.whenwheremeet.domain.model.isMeetingConfirmed
 import kotlinx.datetime.LocalDate
-import kotlinx.datetime.plus
 
 enum class HomeActionType {
     INPUT_AVAILABILITY,
@@ -30,6 +31,8 @@ data class MeetingOverview(
     val areaRecommendations: List<AreaRecommendation>,
     val placeCandidates: List<ScoredPlaceCandidate>,
     val placeVotes: List<PlaceVote>,
+    val destinationStationProposals: List<DestinationStationProposal> = emptyList(),
+    val destinationStationVotes: List<DestinationStationVote> = emptyList(),
 )
 
 data class HomeDashboard(
@@ -37,6 +40,7 @@ data class HomeDashboard(
     val actionItems: List<HomeActionItem>,
     val upcomingConfirmedMeetings: List<HomeMeetingCard>,
     val inProgressMeetings: List<HomeMeetingCard>,
+    val pastMeetings: List<HomeMeetingCard>,
 )
 
 data class HomeSummary(
@@ -83,10 +87,15 @@ class ResolveHomeActionTypeUseCase {
                 if (hasStartLocation) HomeActionType.NONE else HomeActionType.INPUT_START_LOCATION
             }
             MeetingStatus.PLACE_SELECTING -> {
-                val hasVote = meeting.placeVotes.any { it.participantId == participantId }
+                val validStationIds = meeting.destinationStationProposals.mapTo(mutableSetOf()) { it.station.id }
+                val hasVote = meeting.destinationStationVotes.any {
+                    it.participantId == participantId && it.stationId in validStationIds
+                } ||
+                    meeting.placeVotes.any { it.participantId == participantId }
                 if (hasVote) HomeActionType.NONE else HomeActionType.VOTE_PLACE
             }
-            MeetingStatus.PLACE_CONFIRMED -> HomeActionType.VIEW_CONFIRMED
+            MeetingStatus.PLACE_CONFIRMED,
+            MeetingStatus.MEETING_CONFIRMED -> HomeActionType.VIEW_CONFIRMED
             MeetingStatus.DRAFT,
             MeetingStatus.CANCELLED -> HomeActionType.NONE
         }
@@ -99,11 +108,9 @@ class BuildHomeDashboardUseCase(
     operator fun invoke(
         meetings: List<MeetingOverview>,
         today: LocalDate,
-        horizonEnd: LocalDate = today.plus(DatePeriod(days = 7)),
     ): HomeDashboard {
-        val activeMeetings = meetings.filter {
-            it.currentParticipantId != null && it.room.status != MeetingStatus.CANCELLED
-        }
+        val joinedMeetings = meetings.filter { it.currentParticipantId != null }
+        val activeMeetings = joinedMeetings.filter { it.room.status != MeetingStatus.CANCELLED }
         val enriched = activeMeetings.map { it to resolveActionType(it) }
         val actionItems = enriched
             .filter { (_, actionType) -> actionType != HomeActionType.NONE && actionType != HomeActionType.VIEW_CONFIRMED }
@@ -113,42 +120,48 @@ class BuildHomeDashboardUseCase(
 
         val upcoming = enriched
             .filter { (meeting, _) ->
-                meeting.room.status == MeetingStatus.PLACE_CONFIRMED &&
+                meeting.room.status.isMeetingConfirmed &&
                     meeting.room.confirmedDate != null &&
                     meeting.room.confirmedDate >= today
             }
             .sortedBy { it.first.room.confirmedDate }
-            .take(3)
             .map { (meeting, actionType) -> meeting.toMeetingCard(actionType) }
 
         val inProgress = enriched
             .filter { (meeting, _) ->
-                meeting.room.status != MeetingStatus.PLACE_CONFIRMED &&
+                !meeting.room.status.isMeetingConfirmed &&
                     meeting.room.status != MeetingStatus.CANCELLED
             }
             .sortedWith(compareBy<Pair<MeetingOverview, HomeActionType>> { it.first.room.responseDeadline ?: it.first.room.confirmedDate ?: it.first.room.dateRangeEnd }
                 .thenByDescending { it.first.room.updatedAt })
-            .take(3)
             .map { (meeting, actionType) -> meeting.toMeetingCard(actionType) }
 
-        val confirmedThisPeriod = activeMeetings.count {
-            it.room.status == MeetingStatus.PLACE_CONFIRMED &&
+        val past = joinedMeetings
+            .filter { meeting ->
+                meeting.room.status == MeetingStatus.CANCELLED ||
+                    (meeting.room.status.isMeetingConfirmed && meeting.room.confirmedDate?.let { it < today } == true)
+            }
+            .sortedByDescending { it.room.confirmedDate ?: it.room.dateRangeEnd }
+            .map { meeting -> meeting.toMeetingCard(resolveActionType(meeting)) }
+
+        val upcomingConfirmedCount = activeMeetings.count {
+            it.room.status.isMeetingConfirmed &&
                 it.room.confirmedDate != null &&
-                it.room.confirmedDate >= today &&
-                it.room.confirmedDate <= horizonEnd
+                it.room.confirmedDate >= today
         }
         val pendingResponseCount = enriched.count { it.second == HomeActionType.INPUT_AVAILABILITY || it.second == HomeActionType.INPUT_START_LOCATION }
         val placeVoteRequiredCount = enriched.count { it.second == HomeActionType.VOTE_PLACE }
 
         return HomeDashboard(
             summary = HomeSummary(
-                confirmedCount = confirmedThisPeriod,
+                confirmedCount = upcomingConfirmedCount,
                 pendingResponseCount = pendingResponseCount,
                 placeVoteRequiredCount = placeVoteRequiredCount,
             ),
             actionItems = actionItems,
             upcomingConfirmedMeetings = upcoming,
             inProgressMeetings = inProgress,
+            pastMeetings = past,
         )
     }
 
@@ -176,7 +189,7 @@ class BuildHomeDashboardUseCase(
             travelTimeText = travelTimeText(),
             actionType = actionType,
             ctaText = actionType.ctaText(),
-            isConfirmed = room.status == MeetingStatus.PLACE_CONFIRMED,
+            isConfirmed = room.status.isMeetingConfirmed,
         )
 
     private fun MeetingOverview.responseText(): String? {
@@ -210,13 +223,14 @@ fun MeetingStatus.statusText(): String = when (this) {
     MeetingStatus.DATE_CONFIRMED -> "날짜 확정"
     MeetingStatus.PLACE_SELECTING -> "장소 선택 중"
     MeetingStatus.PLACE_CONFIRMED -> "약속 확정"
+    MeetingStatus.MEETING_CONFIRMED -> "약속 확정 · 장소 미정"
     MeetingStatus.CANCELLED -> "취소됨"
 }
 
 fun HomeActionType.ctaText(): String = when (this) {
     HomeActionType.INPUT_AVAILABILITY -> "날짜 입력하기"
-    HomeActionType.INPUT_START_LOCATION -> "출발 위치 입력하기"
-    HomeActionType.VOTE_PLACE -> "장소 투표하기"
+    HomeActionType.INPUT_START_LOCATION -> "출발역 입력하기"
+    HomeActionType.VOTE_PLACE -> "후보역 투표하기"
     HomeActionType.CONFIRM_MEETING -> "확정 확인하기"
     HomeActionType.VIEW_CONFIRMED -> "상세 보기"
     HomeActionType.NONE -> "약속방 보기"
@@ -224,8 +238,8 @@ fun HomeActionType.ctaText(): String = when (this) {
 
 fun actionTitle(actionType: HomeActionType): String = when (actionType) {
     HomeActionType.INPUT_AVAILABILITY -> "가능한 날짜를 알려주세요"
-    HomeActionType.INPUT_START_LOCATION -> "출발 위치를 입력해주세요"
-    HomeActionType.VOTE_PLACE -> "마음에 드는 장소에 투표해주세요"
+    HomeActionType.INPUT_START_LOCATION -> "출발역을 입력해주세요"
+    HomeActionType.VOTE_PLACE -> "만나고 싶은 역에 투표해주세요"
     HomeActionType.CONFIRM_MEETING -> "최종 확정을 확인해주세요"
     HomeActionType.VIEW_CONFIRMED -> "확정된 약속을 확인하세요"
     HomeActionType.NONE -> "진행 상황을 확인하세요"

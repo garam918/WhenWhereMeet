@@ -34,6 +34,16 @@ data class Participant(
     val nickname: String,
     val isHost: Boolean,
     val joinedAt: Instant,
+    val accountId: String? = null,
+    val isInvited: Boolean = false,
+)
+
+@Serializable
+data class FriendProfile(
+    val userId: String,
+    val nickname: String,
+    val sharedMeetingCount: Int,
+    val lastMetAt: Instant,
 )
 
 @Serializable
@@ -59,8 +69,12 @@ enum class MeetingStatus {
     DATE_CONFIRMED,
     PLACE_SELECTING,
     PLACE_CONFIRMED,
+    MEETING_CONFIRMED,
     CANCELLED,
 }
+
+val MeetingStatus.isMeetingConfirmed: Boolean
+    get() = this == MeetingStatus.PLACE_CONFIRMED || this == MeetingStatus.MEETING_CONFIRMED
 
 @Serializable
 enum class MeetingType(val label: String) {

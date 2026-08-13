@@ -1,6 +1,7 @@
 package com.garam.whenwheremeet.domain.usecase
 
 import com.garam.whenwheremeet.domain.model.MeetingStatus
+import com.garam.whenwheremeet.domain.model.isMeetingConfirmed
 import kotlinx.datetime.DatePeriod
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.plus
@@ -114,9 +115,9 @@ class BuildCalendarMonthUseCase(
             selectedDate = selectedDate,
             filter = filter,
             monthlySummary = CalendarMonthlySummary(
-                confirmedCount = monthMeetings.count { it.first.room.status == MeetingStatus.PLACE_CONFIRMED },
+                confirmedCount = monthMeetings.count { it.first.room.status.isMeetingConfirmed },
                 inProgressCount = monthMeetings.count {
-                    it.first.room.status != MeetingStatus.PLACE_CONFIRMED &&
+                    !it.first.room.status.isMeetingConfirmed &&
                         it.first.room.status != MeetingStatus.CANCELLED
                 },
                 myActionRequiredCount = monthMeetings.count { (_, actionType) ->
@@ -145,8 +146,8 @@ class BuildCalendarMonthUseCase(
         val actionType = second
         return when (filter) {
             CalendarFilter.ALL -> true
-            CalendarFilter.CONFIRMED -> first.room.status == MeetingStatus.PLACE_CONFIRMED
-            CalendarFilter.IN_PROGRESS -> first.room.status != MeetingStatus.PLACE_CONFIRMED &&
+            CalendarFilter.CONFIRMED -> first.room.status.isMeetingConfirmed
+            CalendarFilter.IN_PROGRESS -> !first.room.status.isMeetingConfirmed &&
                 first.room.status != MeetingStatus.CANCELLED
             CalendarFilter.MY_ACTION_REQUIRED -> actionType != HomeActionType.NONE && actionType != HomeActionType.VIEW_CONFIRMED
         }
@@ -168,7 +169,7 @@ class BuildCalendarMonthUseCase(
                 actionType != HomeActionType.NONE -> actionType.ctaText()
                 else -> "약속방 보기"
             },
-            isConfirmed = room.status == MeetingStatus.PLACE_CONFIRMED,
+            isConfirmed = room.status.isMeetingConfirmed,
         )
 
     private fun MeetingOverview.responseText(): String? {
@@ -193,6 +194,7 @@ fun CalendarMonth.dates(): List<LocalDate> {
 
 fun MeetingOverview.relevantDates(): List<LocalDate> = when (room.status) {
     MeetingStatus.PLACE_CONFIRMED,
+    MeetingStatus.MEETING_CONFIRMED,
     MeetingStatus.DATE_CONFIRMED,
     MeetingStatus.PLACE_SELECTING -> listOfNotNull(room.confirmedDate)
     MeetingStatus.COLLECTING_AVAILABILITY -> datesBetween(room.dateRangeStart, room.dateRangeEnd)
@@ -201,7 +203,8 @@ fun MeetingOverview.relevantDates(): List<LocalDate> = when (room.status) {
 }
 
 fun MeetingStatus.toIndicator(): CalendarDayIndicator = when (this) {
-    MeetingStatus.PLACE_CONFIRMED -> CalendarDayIndicator.CONFIRMED
+    MeetingStatus.PLACE_CONFIRMED,
+    MeetingStatus.MEETING_CONFIRMED -> CalendarDayIndicator.CONFIRMED
     MeetingStatus.COLLECTING_AVAILABILITY -> CalendarDayIndicator.COLLECTING_AVAILABILITY
     MeetingStatus.DATE_CONFIRMED,
     MeetingStatus.PLACE_SELECTING -> CalendarDayIndicator.PLACE_SELECTING

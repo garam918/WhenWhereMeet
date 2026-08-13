@@ -3,6 +3,9 @@ package com.garam.whenwheremeet.data.repository
 import com.garam.whenwheremeet.domain.model.Availability
 import com.garam.whenwheremeet.domain.model.AvailabilityStatus
 import com.garam.whenwheremeet.domain.model.AreaRecommendation
+import com.garam.whenwheremeet.domain.model.DestinationStationProposal
+import com.garam.whenwheremeet.domain.model.DestinationStationVote
+import com.garam.whenwheremeet.domain.model.FriendProfile
 import com.garam.whenwheremeet.domain.model.MeetingRoom
 import com.garam.whenwheremeet.domain.model.MeetingStatus
 import com.garam.whenwheremeet.domain.model.MeetingType
@@ -13,14 +16,15 @@ import com.garam.whenwheremeet.domain.model.PlaceVote
 import com.garam.whenwheremeet.domain.model.PlaceVoteType
 import com.garam.whenwheremeet.domain.model.ScoredPlaceCandidate
 import com.garam.whenwheremeet.domain.model.TransportMode
+import com.garam.whenwheremeet.domain.model.TransitStation
 import com.garam.whenwheremeet.domain.model.UserStartLocation
 import com.garam.whenwheremeet.domain.repository.MeetingRepository
+import com.garam.whenwheremeet.platform.KoreaTimeZone
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.LocalDateTime
-import kotlinx.datetime.TimeZone
 import kotlinx.datetime.UtcOffset
 import kotlinx.datetime.toInstant
 import kotlinx.datetime.toLocalDateTime
@@ -57,11 +61,27 @@ class WebFirestoreMeetingRepository(
     override fun getParticipants(roomId: String): List<Participant> = local.getParticipants(roomId)
     override fun getAvailabilities(roomId: String): List<Availability> = local.getAvailabilities(roomId)
     override fun getCurrentParticipantId(roomId: String): String? = local.getCurrentParticipantId(roomId)
+    override fun getFriends(): List<FriendProfile> = local.getFriends()
     override fun getStartLocations(roomId: String): List<UserStartLocation> = local.getStartLocations(roomId)
     override fun getTravelPreferences(roomId: String): List<ParticipantTravelPreference> = local.getTravelPreferences(roomId)
     override fun getAreaRecommendations(roomId: String): List<AreaRecommendation> = local.getAreaRecommendations(roomId)
     override fun getPlaceCandidates(roomId: String): List<ScoredPlaceCandidate> = local.getPlaceCandidates(roomId)
     override fun getPlaceVotes(roomId: String): List<PlaceVote> = local.getPlaceVotes(roomId)
+    override fun getDestinationStationProposals(roomId: String): List<DestinationStationProposal> =
+        local.getDestinationStationProposals(roomId)
+    override fun getDestinationStationVotes(roomId: String): List<DestinationStationVote> =
+        local.getDestinationStationVotes(roomId)
+
+    override suspend fun refreshRooms() {
+        val roomIds = queryCurrentUserParticipantDocuments()
+            .map { it.fields().stringField("roomId") }
+            .filter { it.isNotBlank() }
+            .distinct()
+        roomIds.forEach { refreshRoom(it) }
+        local.retainRooms(roomIds.toSet())
+    }
+
+    override fun clearLocalCache() = local.clearLocalCache()
 
     override suspend fun getRoomForJoin(roomIdOrCode: String): MeetingRoom? {
         val code = roomIdOrCode.normalizedRoomCode()
@@ -70,9 +90,16 @@ class WebFirestoreMeetingRepository(
         val roomId = codeDoc?.fields()?.stringField("roomId") ?: code
         val roomDoc = getDocument("meetingRooms/$roomId") ?: return null
         val room = roomDoc.fields().toMeetingRoom()
-        local.importRoom(room, loadParticipants(room.id), local.getCurrentParticipantId(room.id))
+        val participants = loadParticipants(room.id)
+        local.importRoom(
+            room,
+            participants,
+            local.getCurrentParticipantId(room.id) ?: participants.firstOrNull { it.accountId == currentAuthUid() }?.id,
+        )
         local.importAvailabilities(room.id, loadAvailabilities(room.id))
         local.importStartLocations(room.id, loadStartLocations(room.id))
+        local.importDestinationStationProposals(room.id, loadDestinationStationProposals(room.id))
+        local.importDestinationStationVotes(room.id, loadDestinationStationVotes(room.id))
         return room
     }
 
@@ -85,13 +112,23 @@ class WebFirestoreMeetingRepository(
             return
         }
         val remoteRoom = roomDoc.fields().toMeetingRoom()
+        val participants = loadParticipants(remoteRoom.id)
         local.importRoom(
             room = mergeRemoteRoom(remoteRoom),
-            participants = loadParticipants(remoteRoom.id),
-            currentParticipantId = local.getCurrentParticipantId(remoteRoom.id),
+            participants = participants,
+            currentParticipantId = local.getCurrentParticipantId(remoteRoom.id)
+                ?: participants.firstOrNull { it.accountId == currentAuthUid() }?.id,
         )
         local.importAvailabilities(remoteRoom.id, loadAvailabilities(remoteRoom.id))
         local.importStartLocations(remoteRoom.id, loadStartLocations(remoteRoom.id))
+        local.importDestinationStationProposals(remoteRoom.id, loadDestinationStationProposals(remoteRoom.id))
+        local.importDestinationStationVotes(remoteRoom.id, loadDestinationStationVotes(remoteRoom.id))
+    }
+
+    override suspend fun refreshFriends() {
+        local.importFriends(
+            listDocuments("users/${currentAuthUid()}/friends").map { it.fields().toFriendProfile() },
+        )
     }
 
     override fun observeRoom(roomId: String): Flow<Unit> = flow {
@@ -102,25 +139,67 @@ class WebFirestoreMeetingRepository(
         }
     }
 
-    override suspend fun createRoom(room: MeetingRoom, host: Participant) {
+    override suspend fun createRoom(
+        room: MeetingRoom,
+        host: Participant,
+        invitedParticipants: List<Participant>,
+    ) {
         val code = room.id.normalizedRoomCode()
         require(room.maxParticipants in 2..8) { "최대 인원은 2명에서 8명 사이여야 합니다." }
+        require(1 + invitedParticipants.size <= room.maxParticipants) { "초대 인원이 방 정원을 초과했습니다." }
         val roomToStore = room.copy(id = code)
         val hostToStore = host.copy(roomId = code)
+        val invitedToStore = invitedParticipants.map { it.copy(roomId = code, isInvited = true) }
+        require(invitedToStore.all { it.accountId != null }) { "친구 계정 정보를 확인해주세요." }
+        val allParticipants = listOf(hostToStore) + invitedToStore
+        require(allParticipants.map { it.nickname.lowercase() }.distinct().size == allParticipants.size) {
+            "같은 닉네임의 친구를 중복으로 초대할 수 없습니다."
+        }
         val authUid = currentAuthUid()
-        commit(
-            updateWrite("meetingRooms/$code", roomToStore.toFirestoreFields(participantCount = 1, hostAuthUid = authUid), exists = false),
+        val writes = mutableListOf(
+            updateWrite("meetingRooms/$code", roomToStore.toFirestoreFields(participantCount = allParticipants.size, hostAuthUid = authUid), exists = false),
             updateWrite("roomCodes/$code", roomCodeFields(code, code, room.createdAt), exists = false),
             updateWrite("meetingRooms/$code/participants/${host.id}", hostToStore.toFirestoreFields(authUid), exists = false),
             updateWrite("meetingRooms/$code/nicknameKeys/${host.nickname.nicknameKey()}", nicknameFields(host.id), exists = false),
         )
-        local.createRoom(roomToStore, hostToStore)
+        invitedToStore.forEach { invited ->
+            writes += updateWrite(
+                "meetingRooms/$code/participants/${invited.id}",
+                invited.toFirestoreFields(requireNotNull(invited.accountId)),
+                exists = false,
+            )
+            writes += updateWrite(
+                "meetingRooms/$code/nicknameKeys/${invited.nickname.nicknameKey()}",
+                nicknameFields(invited.id),
+                exists = false,
+            )
+        }
+        commit(*writes.toTypedArray())
+        local.createRoom(roomToStore, hostToStore.copy(accountId = authUid), invitedToStore)
     }
 
     override suspend fun joinRoom(participant: Participant) {
         val room = getRoomForJoin(participant.roomId)
             ?: throw IllegalArgumentException("방 코드를 확인해주세요.")
         val participantToStore = participant.copy(roomId = room.id)
+        val authUid = currentAuthUid()
+        val existingParticipant = loadParticipants(room.id).firstOrNull { it.accountId == authUid }
+        if (existingParticipant != null) {
+            if (existingParticipant.isInvited) {
+                commit(
+                    updateWrite(
+                        "meetingRooms/${room.id}/participants/${existingParticipant.id}",
+                        existingParticipant.copy(
+                            isInvited = false,
+                            joinedAt = participant.joinedAt,
+                        ).toFirestoreFields(authUid),
+                        exists = true,
+                    ),
+                )
+            }
+            local.importRoom(room, loadParticipants(room.id), existingParticipant.id)
+            return
+        }
         val currentRoomDoc = requireNotNull(getDocument("meetingRooms/${room.id}")) { "방 코드를 확인해주세요." }
         val currentParticipantCount = currentRoomDoc.fields().intField("participantCount")
         val currentMaxParticipants = currentRoomDoc.fields().intField("maxParticipants").coerceAtLeast(room.maxParticipants)
@@ -128,7 +207,6 @@ class WebFirestoreMeetingRepository(
         require(getDocument("meetingRooms/${room.id}/nicknameKeys/${participant.nickname.nicknameKey()}") == null) {
             "이미 사용 중인 닉네임입니다."
         }
-        val authUid = currentAuthUid()
         val updatedRoom = room.copy(updatedAt = participant.joinedAt)
         commit(
             updateWrite(
@@ -141,7 +219,7 @@ class WebFirestoreMeetingRepository(
         )
         local.importRoom(
             room = room,
-            participants = (loadParticipants(room.id) + participantToStore).distinctBy { it.id },
+            participants = (loadParticipants(room.id) + participantToStore.copy(accountId = authUid)).distinctBy { it.id },
             currentParticipantId = participant.id,
         )
     }
@@ -166,6 +244,8 @@ class WebFirestoreMeetingRepository(
         loadAvailabilities(room.id)
             .filter { it.participantId == participantId }
             .forEach { writes += deleteWrite("meetingRooms/${room.id}/availabilities/${participantId}-${it.date}") }
+        writes += deleteWrite("meetingRooms/${room.id}/destinationStationProposals/$participantId")
+        writes += deleteWrite("meetingRooms/${room.id}/destinationStationVotes/$participantId")
         commit(*writes.toTypedArray())
         local.leaveRoom(room.id, participantId)
     }
@@ -184,6 +264,12 @@ class WebFirestoreMeetingRepository(
         }
         loadStartLocations(room.id).forEach {
             writes += deleteWrite("meetingRooms/${room.id}/startLocations/${it.participantId}")
+        }
+        loadDestinationStationProposals(room.id).forEach {
+            writes += deleteWrite("meetingRooms/${room.id}/destinationStationProposals/${it.participantId}")
+        }
+        loadDestinationStationVotes(room.id).forEach {
+            writes += deleteWrite("meetingRooms/${room.id}/destinationStationVotes/${it.participantId}")
         }
         writes += deleteWrite("roomCodes/${room.id.normalizedRoomCode()}")
         writes += deleteWrite("meetingRooms/${room.id}")
@@ -234,6 +320,29 @@ class WebFirestoreMeetingRepository(
         local.confirmDate(room.id, date)
     }
 
+    override suspend fun confirmMeetingWithoutPlace(roomId: String) {
+        val room = getRoom(roomId) ?: throw IllegalArgumentException("방 정보를 찾을 수 없습니다.")
+        require(room.confirmedDate != null) { "날짜를 먼저 확정해주세요." }
+        val roomDoc = requireNotNull(getDocument("meetingRooms/${room.id}")) { "방 정보를 찾을 수 없습니다." }
+        val updated = room.copy(
+            status = MeetingStatus.MEETING_CONFIRMED,
+            selectedAreaCandidateId = null,
+            confirmedPlace = null,
+            updatedAt = Clock.System.now(),
+        )
+        commit(
+            updateWrite(
+                "meetingRooms/${room.id}",
+                updated.toFirestoreFields(
+                    participantCount = loadParticipants(room.id).size,
+                    hostAuthUid = roomDoc.fields().optionalStringField("hostAuthUid"),
+                ),
+                exists = true,
+            ),
+        )
+        local.confirmMeetingWithoutPlace(room.id)
+    }
+
     override suspend fun saveStartLocation(location: UserStartLocation) {
         val room = getRoom(location.roomId) ?: throw IllegalArgumentException("방 정보를 찾을 수 없습니다.")
         commit(
@@ -250,6 +359,59 @@ class WebFirestoreMeetingRepository(
     override fun selectAreaCandidate(roomId: String, candidateId: String) = local.selectAreaCandidate(roomId, candidateId)
     override fun savePlaceCandidates(roomId: String, candidates: List<ScoredPlaceCandidate>) = local.savePlaceCandidates(roomId, candidates)
     override fun savePlaceVote(roomId: String, placeId: String, participantId: String, voteType: PlaceVoteType) = local.savePlaceVote(roomId, placeId, participantId, voteType)
+    override suspend fun saveDestinationStationProposal(proposal: DestinationStationProposal) {
+        val room = getRoom(proposal.roomId) ?: throw IllegalArgumentException("방 정보를 찾을 수 없습니다.")
+        val roomDoc = requireNotNull(getDocument("meetingRooms/${room.id}")) { "방 정보를 찾을 수 없습니다." }
+        val normalized = proposal.copy(roomId = room.id)
+        val updatedRoom = room.copy(
+            status = MeetingStatus.PLACE_SELECTING,
+            confirmedPlace = null,
+            updatedAt = proposal.updatedAt,
+        )
+        commit(
+            updateWrite(
+                "meetingRooms/${room.id}",
+                updatedRoom.toFirestoreFields(
+                    participantCount = loadParticipants(room.id).size,
+                    hostAuthUid = roomDoc.fields().optionalStringField("hostAuthUid"),
+                ),
+                exists = true,
+            ),
+            updateWrite(
+                "meetingRooms/${room.id}/destinationStationProposals/${proposal.participantId}",
+                normalized.toFirestoreFields(),
+                exists = null,
+            ),
+        )
+        local.saveDestinationStationProposal(normalized)
+    }
+
+    override suspend fun saveDestinationStationVote(vote: DestinationStationVote) {
+        val room = getRoom(vote.roomId) ?: throw IllegalArgumentException("방 정보를 찾을 수 없습니다.")
+        val roomDoc = requireNotNull(getDocument("meetingRooms/${room.id}")) { "방 정보를 찾을 수 없습니다." }
+        require(getDestinationStationProposals(room.id).any { it.station.id == vote.stationId }) {
+            "현재 후보 목록에 없는 역입니다."
+        }
+        val normalized = vote.copy(roomId = room.id)
+        val updatedRoom = room.copy(status = MeetingStatus.PLACE_SELECTING, updatedAt = vote.updatedAt)
+        commit(
+            updateWrite(
+                "meetingRooms/${room.id}",
+                updatedRoom.toFirestoreFields(
+                    participantCount = loadParticipants(room.id).size,
+                    hostAuthUid = roomDoc.fields().optionalStringField("hostAuthUid"),
+                ),
+                exists = true,
+            ),
+            updateWrite(
+                "meetingRooms/${room.id}/destinationStationVotes/${vote.participantId}",
+                normalized.toFirestoreFields(),
+                exists = null,
+            ),
+        )
+        local.saveDestinationStationVote(normalized)
+    }
+
     override suspend fun confirmPlace(roomId: String, place: PlaceCandidate) {
         val room = getRoom(roomId) ?: throw IllegalArgumentException("방 정보를 찾을 수 없습니다.")
         val roomDoc = requireNotNull(getDocument("meetingRooms/${room.id}")) { "방 정보를 찾을 수 없습니다." }
@@ -280,6 +442,12 @@ class WebFirestoreMeetingRepository(
     private suspend fun loadStartLocations(roomId: String): List<UserStartLocation> =
         listDocuments("meetingRooms/$roomId/startLocations").map { it.fields().toStartLocation() }
 
+    private suspend fun loadDestinationStationProposals(roomId: String): List<DestinationStationProposal> =
+        listDocuments("meetingRooms/$roomId/destinationStationProposals").map { it.fields().toDestinationStationProposal() }
+
+    private suspend fun loadDestinationStationVotes(roomId: String): List<DestinationStationVote> =
+        listDocuments("meetingRooms/$roomId/destinationStationVotes").map { it.fields().toDestinationStationVote() }
+
     private suspend fun getDocument(path: String): JsonObject? {
         val response = fetch(documentUrl(path), jsonRequest(RequestMethod.GET, bearerToken = currentIdToken()))
         val responseText = response.text()
@@ -297,6 +465,35 @@ class WebFirestoreMeetingRepository(
         return body["documents"]?.jsonArray?.map { it.jsonObject }.orEmpty()
     }
 
+    private suspend fun queryCurrentUserParticipantDocuments(): List<JsonObject> {
+        val body = buildJsonObject {
+            put("structuredQuery", buildJsonObject {
+                put("from", buildJsonArray {
+                    add(buildJsonObject {
+                        put("collectionId", "participants")
+                        put("allDescendants", true)
+                    })
+                })
+                put("where", buildJsonObject {
+                    put("fieldFilter", buildJsonObject {
+                        put("field", buildJsonObject { put("fieldPath", "authUid") })
+                        put("op", "EQUAL")
+                        put("value", stringValue(currentAuthUid()))
+                    })
+                })
+            })
+        }.toString()
+        val response = fetch(
+            url = "https://firestore.googleapis.com/v1/projects/${config.projectId}/databases/${config.databaseId}/documents:runQuery",
+            init = jsonRequest(RequestMethod.POST, body, currentIdToken()),
+        )
+        val responseText = response.text()
+        if (!response.ok) throw IllegalStateException(firebaseErrorMessage(response.status.toInt(), responseText))
+        return json.parseToJsonElement(responseText).jsonArray.mapNotNull { result ->
+            result.jsonObject["document"]?.jsonObject
+        }
+    }
+
     private suspend fun commit(vararg writes: JsonObject) {
         if (writes.isEmpty()) return
         val body = buildJsonObject {
@@ -310,13 +507,17 @@ class WebFirestoreMeetingRepository(
         if (!response.ok) throw IllegalStateException(firebaseErrorMessage(response.status.toInt(), responseText))
     }
 
-    private fun currentAuthUid(): String =
-        requireNotNull(auth.currentSession()?.uid) { "로그인 정보를 확인할 수 없습니다." }
+    private fun currentAuthUid(): String {
+        val session = requireNotNull(auth.currentSession()) { "로그인 정보를 확인할 수 없습니다." }
+        require(!session.isAnonymous) { "Google 또는 Apple 계정으로 로그인해주세요." }
+        return session.uid
+    }
 
-    private suspend fun currentIdToken(): String =
-        auth.currentIdToken() ?: auth.signInAnonymously().let {
-            requireNotNull(auth.currentIdToken()) { "웹 로그인 토큰을 가져오지 못했어요." }
+    private suspend fun currentIdToken(): String {
+        return requireNotNull(auth.currentIdToken()) {
+            "로그인이 필요해요. Google 또는 Apple 계정으로 다시 로그인해주세요."
         }
+    }
 
     private fun documentUrl(path: String): String =
         "https://firestore.googleapis.com/v1/projects/${config.projectId}/databases/${config.databaseId}/documents/${path.encodePath()}"
@@ -385,6 +586,7 @@ private fun Participant.toFirestoreFields(authUid: String): JsonObject = buildJs
     put("nickname", stringValue(nickname))
     put("isHost", booleanValue(isHost))
     put("authUid", stringValue(authUid))
+    put("isInvited", booleanValue(isInvited))
     put("joinedAt", stringValue(joinedAt.toKoreaIsoString()))
 }
 
@@ -427,6 +629,25 @@ private fun UserStartLocation.toFirestoreFields(): JsonObject = buildJsonObject 
     put("updatedAt", stringValue(updatedAt.toKoreaIsoString()))
 }
 
+private fun DestinationStationProposal.toFirestoreFields(): JsonObject = buildJsonObject {
+    put("roomId", stringValue(roomId))
+    put("participantId", stringValue(participantId))
+    put("stationId", stringValue(station.id))
+    put("stationName", stringValue(station.name))
+    put("latitude", doubleValue(station.latitude))
+    put("longitude", doubleValue(station.longitude))
+    put("lines", arrayValue(station.lines.map(::stringValue)))
+    put("region", stringValue(station.region))
+    put("updatedAt", stringValue(updatedAt.toKoreaIsoString()))
+}
+
+private fun DestinationStationVote.toFirestoreFields(): JsonObject = buildJsonObject {
+    put("roomId", stringValue(roomId))
+    put("participantId", stringValue(participantId))
+    put("stationId", stringValue(stationId))
+    put("updatedAt", stringValue(updatedAt.toKoreaIsoString()))
+}
+
 private fun roomCodeFields(code: String, roomId: String, createdAt: Instant): JsonObject = buildJsonObject {
     put("code", stringValue(code))
     put("roomId", stringValue(roomId))
@@ -461,6 +682,15 @@ private fun JsonObject.toParticipant(): Participant = Participant(
     nickname = stringField("nickname"),
     isHost = boolField("isHost"),
     joinedAt = stringField("joinedAt").parseFirestoreInstant(),
+    accountId = optionalStringField("authUid"),
+    isInvited = boolField("isInvited"),
+)
+
+private fun JsonObject.toFriendProfile(): FriendProfile = FriendProfile(
+    userId = stringField("userId"),
+    nickname = stringField("nickname"),
+    sharedMeetingCount = intField("sharedMeetingCount"),
+    lastMetAt = stringField("lastMetAt").parseFirestoreInstant(),
 )
 
 private fun JsonObject.toAvailability(): Availability = Availability(
@@ -479,6 +709,27 @@ private fun JsonObject.toStartLocation(): UserStartLocation = UserStartLocation(
     latitude = doubleField("latitude"),
     longitude = doubleField("longitude"),
     privacyLevel = enumValueOf(optionalStringField("privacyLevel") ?: "AREA_ONLY_VISIBLE"),
+    updatedAt = stringField("updatedAt").parseFirestoreInstant(),
+)
+
+private fun JsonObject.toDestinationStationProposal(): DestinationStationProposal = DestinationStationProposal(
+    roomId = stringField("roomId"),
+    participantId = stringField("participantId"),
+    station = TransitStation(
+        id = stringField("stationId"),
+        name = stringField("stationName"),
+        latitude = doubleField("latitude"),
+        longitude = doubleField("longitude"),
+        lines = stringArrayField("lines"),
+        region = optionalStringField("region").orEmpty(),
+    ),
+    updatedAt = stringField("updatedAt").parseFirestoreInstant(),
+)
+
+private fun JsonObject.toDestinationStationVote(): DestinationStationVote = DestinationStationVote(
+    roomId = stringField("roomId"),
+    participantId = stringField("participantId"),
+    stationId = stringField("stationId"),
     updatedAt = stringField("updatedAt").parseFirestoreInstant(),
 )
 
@@ -546,8 +797,6 @@ private fun arrayValue(values: List<JsonElement>): JsonObject = buildJsonObject 
 
 private fun String.normalizedRoomCode(): String = trim().uppercase()
 private fun String.nicknameKey(): String = trim().lowercase()
-
-private val KoreaTimeZone = TimeZone.of("Asia/Seoul")
 
 private fun Instant.toKoreaIsoString(): String = toLocalDateTime(KoreaTimeZone).formatIsoWithOffset()
 

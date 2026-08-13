@@ -4,6 +4,9 @@ import com.garam.whenwheremeet.domain.model.Availability
 import com.garam.whenwheremeet.domain.model.MeetingRoom
 import com.garam.whenwheremeet.domain.model.Participant
 import com.garam.whenwheremeet.domain.model.AreaRecommendation
+import com.garam.whenwheremeet.domain.model.DestinationStationProposal
+import com.garam.whenwheremeet.domain.model.DestinationStationVote
+import com.garam.whenwheremeet.domain.model.FriendProfile
 import com.garam.whenwheremeet.domain.model.ParticipantTravelPreference
 import com.garam.whenwheremeet.domain.model.TransportMode
 import com.garam.whenwheremeet.domain.model.UserStartLocation
@@ -21,18 +24,23 @@ interface MeetingRepository {
     fun getParticipants(roomId: String): List<Participant>
     fun getAvailabilities(roomId: String): List<Availability>
     fun getCurrentParticipantId(roomId: String): String?
+    fun getFriends(): List<FriendProfile>
     suspend fun getRoomForJoin(roomIdOrCode: String): MeetingRoom? = getRoom(roomIdOrCode)
     suspend fun refreshRoom(roomId: String) = Unit
     suspend fun refreshRooms() {
         getRooms().forEach { refreshRoom(it.id) }
     }
+    suspend fun refreshFriends() = Unit
+    fun clearLocalCache() = Unit
     fun observeRoom(roomId: String): Flow<Unit> = emptyFlow()
-    suspend fun createRoom(room: MeetingRoom, host: Participant)
+    suspend fun createRoom(room: MeetingRoom, host: Participant) = createRoom(room, host, emptyList())
+    suspend fun createRoom(room: MeetingRoom, host: Participant, invitedParticipants: List<Participant>)
     suspend fun joinRoom(participant: Participant)
     suspend fun leaveRoom(roomId: String, participantId: String)
     suspend fun deleteRoom(roomId: String)
     suspend fun saveAvailabilities(roomId: String, participantId: String, values: Map<LocalDate, com.garam.whenwheremeet.domain.model.AvailabilityStatus>)
     suspend fun confirmDate(roomId: String, date: LocalDate)
+    suspend fun confirmMeetingWithoutPlace(roomId: String)
     fun getStartLocations(roomId: String): List<UserStartLocation>
     fun getTravelPreferences(roomId: String): List<ParticipantTravelPreference>
     fun getAreaRecommendations(roomId: String): List<AreaRecommendation>
@@ -42,7 +50,11 @@ interface MeetingRepository {
     fun selectAreaCandidate(roomId: String, candidateId: String)
     fun getPlaceCandidates(roomId: String): List<ScoredPlaceCandidate>
     fun getPlaceVotes(roomId: String): List<PlaceVote>
+    fun getDestinationStationProposals(roomId: String): List<DestinationStationProposal>
+    fun getDestinationStationVotes(roomId: String): List<DestinationStationVote>
     fun savePlaceCandidates(roomId: String, candidates: List<ScoredPlaceCandidate>)
     fun savePlaceVote(roomId: String, placeId: String, participantId: String, voteType: PlaceVoteType)
+    suspend fun saveDestinationStationProposal(proposal: DestinationStationProposal)
+    suspend fun saveDestinationStationVote(vote: DestinationStationVote)
     suspend fun confirmPlace(roomId: String, place: PlaceCandidate)
 }

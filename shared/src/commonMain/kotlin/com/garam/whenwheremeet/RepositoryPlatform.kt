@@ -8,6 +8,7 @@ expect fun createMeetingRepository(localRepository: LocalMeetingRepository): Mee
 
 expect fun currentAuthSession(): AuthSession?
 
-expect fun initialRoomCodeFromLaunch(): String?
+const val PUBLIC_MEETING_INVITE_BASE_URL = "https://whenwheremeet.web.app"
 
-expect fun buildRoomJoinLink(roomId: String): String
+fun buildRoomJoinLink(roomId: String): String =
+    "$PUBLIC_MEETING_INVITE_BASE_URL/join/${roomId.trim().uppercase()}"

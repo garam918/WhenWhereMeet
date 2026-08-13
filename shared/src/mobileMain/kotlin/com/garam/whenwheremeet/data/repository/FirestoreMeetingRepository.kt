@@ -3,6 +3,9 @@ package com.garam.whenwheremeet.data.repository
 import com.garam.whenwheremeet.domain.model.Availability
 import com.garam.whenwheremeet.domain.model.AvailabilityStatus
 import com.garam.whenwheremeet.domain.model.AreaRecommendation
+import com.garam.whenwheremeet.domain.model.DestinationStationProposal
+import com.garam.whenwheremeet.domain.model.DestinationStationVote
+import com.garam.whenwheremeet.domain.model.FriendProfile
 import com.garam.whenwheremeet.domain.model.MeetingRoom
 import com.garam.whenwheremeet.domain.model.MeetingStatus
 import com.garam.whenwheremeet.domain.model.MeetingType
@@ -13,8 +16,10 @@ import com.garam.whenwheremeet.domain.model.PlaceVote
 import com.garam.whenwheremeet.domain.model.PlaceVoteType
 import com.garam.whenwheremeet.domain.model.ScoredPlaceCandidate
 import com.garam.whenwheremeet.domain.model.TransportMode
+import com.garam.whenwheremeet.domain.model.TransitStation
 import com.garam.whenwheremeet.domain.model.UserStartLocation
 import com.garam.whenwheremeet.domain.repository.MeetingRepository
+import com.garam.whenwheremeet.platform.KoreaTimeZone
 import dev.gitlive.firebase.Firebase
 import dev.gitlive.firebase.app
 import dev.gitlive.firebase.auth.auth
@@ -25,7 +30,6 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.LocalDateTime
-import kotlinx.datetime.TimeZone
 import kotlinx.datetime.UtcOffset
 import kotlinx.datetime.toInstant
 import kotlinx.datetime.toLocalDateTime
@@ -41,11 +45,31 @@ class FirestoreMeetingRepository(
     override fun getParticipants(roomId: String): List<Participant> = local.getParticipants(roomId)
     override fun getAvailabilities(roomId: String): List<Availability> = local.getAvailabilities(roomId)
     override fun getCurrentParticipantId(roomId: String): String? = local.getCurrentParticipantId(roomId)
+    override fun getFriends(): List<FriendProfile> = local.getFriends()
     override fun getStartLocations(roomId: String): List<UserStartLocation> = local.getStartLocations(roomId)
     override fun getTravelPreferences(roomId: String): List<ParticipantTravelPreference> = local.getTravelPreferences(roomId)
     override fun getAreaRecommendations(roomId: String): List<AreaRecommendation> = local.getAreaRecommendations(roomId)
     override fun getPlaceCandidates(roomId: String): List<ScoredPlaceCandidate> = local.getPlaceCandidates(roomId)
     override fun getPlaceVotes(roomId: String): List<PlaceVote> = local.getPlaceVotes(roomId)
+    override fun getDestinationStationProposals(roomId: String): List<DestinationStationProposal> =
+        local.getDestinationStationProposals(roomId)
+    override fun getDestinationStationVotes(roomId: String): List<DestinationStationVote> =
+        local.getDestinationStationVotes(roomId)
+
+    override suspend fun refreshRooms() {
+        val authUid = currentAuthUid()
+        val roomIds = firestore.collectionGroup(PARTICIPANTS)
+            .where { "authUid" equalTo authUid }
+            .get()
+            .documents
+            .map { it.data<FirestoreParticipant>().roomId }
+            .filter { it.isNotBlank() }
+            .distinct()
+        roomIds.forEach { refreshRoom(it) }
+        local.retainRooms(roomIds.toSet())
+    }
+
+    override fun clearLocalCache() = local.clearLocalCache()
 
     override suspend fun getRoomForJoin(roomIdOrCode: String): MeetingRoom? {
         val code = roomIdOrCode.normalizedRoomCode()
@@ -59,8 +83,13 @@ class FirestoreMeetingRepository(
         val roomSnapshot = rooms.document(roomId).get()
         if (!roomSnapshot.exists) return null
         val room = roomSnapshot.data<FirestoreMeetingRoom>().toDomain()
-        local.importRoom(room, loadParticipants(room.id), local.getCurrentParticipantId(room.id))
+        val participants = loadParticipants(room.id)
+        val currentParticipantId = local.getCurrentParticipantId(room.id)
+            ?: participants.firstOrNull { it.accountId == currentAuthUid() }?.id
+        local.importRoom(room, participants, currentParticipantId)
         local.importStartLocations(room.id, loadStartLocations(room.id))
+        local.importDestinationStationProposals(room.id, loadDestinationStationProposals(room.id))
+        local.importDestinationStationVotes(room.id, loadDestinationStationVotes(room.id))
         return room
     }
 
@@ -75,13 +104,27 @@ class FirestoreMeetingRepository(
             return
         }
         val remoteRoom = roomSnapshot.data<FirestoreMeetingRoom>().toDomain()
+        val participants = loadParticipants(remoteRoom.id)
         local.importRoom(
             room = mergeRemoteRoom(remoteRoom),
-            participants = loadParticipants(remoteRoom.id),
-            currentParticipantId = local.getCurrentParticipantId(remoteRoom.id),
+            participants = participants,
+            currentParticipantId = local.getCurrentParticipantId(remoteRoom.id)
+                ?: participants.firstOrNull { it.accountId == currentAuthUid() }?.id,
         )
         local.importAvailabilities(remoteRoom.id, loadAvailabilities(remoteRoom.id))
         local.importStartLocations(remoteRoom.id, loadStartLocations(remoteRoom.id))
+        local.importDestinationStationProposals(remoteRoom.id, loadDestinationStationProposals(remoteRoom.id))
+        local.importDestinationStationVotes(remoteRoom.id, loadDestinationStationVotes(remoteRoom.id))
+    }
+
+    override suspend fun refreshFriends() {
+        val friends = firestore.collection(USERS)
+            .document(currentAuthUid())
+            .collection(FRIENDS)
+            .get()
+            .documents
+            .map { it.data<FirestoreFriend>().toDomain() }
+        local.importFriends(friends)
     }
 
     override fun observeRoom(roomId: String): Flow<Unit> {
@@ -114,25 +157,58 @@ class FirestoreMeetingRepository(
                     snapshot.documents.map { it.data<FirestoreStartLocation>().toDomain() },
                 )
             },
+            roomRef.collection(DESTINATION_STATION_PROPOSALS).snapshots.map { snapshot ->
+                local.importDestinationStationProposals(
+                    firestoreRoomId,
+                    snapshot.documents.map { it.data<FirestoreDestinationStationProposal>().toDomain() },
+                )
+            },
+            roomRef.collection(DESTINATION_STATION_VOTES).snapshots.map { snapshot ->
+                local.importDestinationStationVotes(
+                    firestoreRoomId,
+                    snapshot.documents.map { it.data<FirestoreDestinationStationVote>().toDomain() },
+                )
+            },
         )
     }
 
-    override suspend fun createRoom(room: MeetingRoom, host: Participant) {
+    override suspend fun createRoom(
+        room: MeetingRoom,
+        host: Participant,
+        invitedParticipants: List<Participant>,
+    ) {
         val code = room.id.normalizedRoomCode()
         require(room.maxParticipants in 2..8) { "최대 인원은 2명에서 8명 사이여야 합니다." }
+        require(1 + invitedParticipants.size <= room.maxParticipants) { "초대 인원이 방 정원을 초과했습니다." }
         val roomToStore = room.copy(id = code)
         val hostToStore = host.copy(roomId = code)
+        val invitedToStore = invitedParticipants.map { it.copy(roomId = code, isInvited = true) }
+        require(invitedToStore.all { it.accountId != null }) { "친구 계정 정보를 확인해주세요." }
+        val allParticipants = listOf(hostToStore) + invitedToStore
+        require(allParticipants.map { it.nickname.lowercase() }.distinct().size == allParticipants.size) {
+            "같은 닉네임의 친구를 중복으로 초대할 수 없습니다."
+        }
         val hostAuthUid = currentAuthUid()
         firestore.runTransaction {
             val codeRef = roomCodes.document(code)
             require(!get(codeRef).exists) { "이미 존재하는 방 코드입니다." }
             val roomRef = rooms.document(code)
-            set(roomRef, FirestoreMeetingRoom.from(roomToStore, participantCount = 1, hostAuthUid = hostAuthUid))
+            set(roomRef, FirestoreMeetingRoom.from(roomToStore, participantCount = allParticipants.size, hostAuthUid = hostAuthUid))
             set(codeRef, FirestoreRoomCode(code = code, roomId = code, createdAt = room.createdAt.toKoreaIsoString()))
             set(roomRef.collection(PARTICIPANTS).document(host.id), FirestoreParticipant.from(hostToStore, authUid = hostAuthUid))
             set(roomRef.collection(NICKNAMES).document(host.nickname.nicknameKey()), FirestoreNickname(participantId = host.id))
+            invitedToStore.forEach { invited ->
+                set(
+                    roomRef.collection(PARTICIPANTS).document(invited.id),
+                    FirestoreParticipant.from(invited, authUid = requireNotNull(invited.accountId)),
+                )
+                set(
+                    roomRef.collection(NICKNAMES).document(invited.nickname.nicknameKey()),
+                    FirestoreNickname(participantId = invited.id),
+                )
+            }
         }
-        local.createRoom(roomToStore, hostToStore)
+        local.createRoom(roomToStore, hostToStore.copy(accountId = hostAuthUid), invitedToStore)
     }
 
     override suspend fun joinRoom(participant: Participant) {
@@ -141,6 +217,21 @@ class FirestoreMeetingRepository(
         val participantToStore = participant.copy(roomId = room.id)
         val nicknameKey = participant.nickname.nicknameKey()
         val authUid = currentAuthUid()
+        val existingParticipant = loadParticipants(room.id).firstOrNull { it.accountId == authUid }
+        if (existingParticipant != null) {
+            if (existingParticipant.isInvited) {
+                val participantRef = rooms.document(room.id).collection(PARTICIPANTS).document(existingParticipant.id)
+                val storedParticipant = participantRef.get().data<FirestoreParticipant>()
+                participantRef.set(
+                    storedParticipant.copy(
+                        isInvited = false,
+                        joinedAt = participant.joinedAt.toKoreaIsoString(),
+                    ),
+                )
+            }
+            local.importRoom(room, loadParticipants(room.id), existingParticipant.id)
+            return
+        }
         firestore.runTransaction {
             val roomRef = rooms.document(room.id)
             val roomSnapshot = get(roomRef)
@@ -155,7 +246,7 @@ class FirestoreMeetingRepository(
         }
         local.importRoom(
             room,
-            (loadParticipants(room.id) + participantToStore).distinctBy { it.id },
+            (loadParticipants(room.id) + participantToStore.copy(accountId = authUid)).distinctBy { it.id },
             participant.id,
         )
     }
@@ -182,6 +273,8 @@ class FirestoreMeetingRepository(
             delete(roomRef.collection(PARTICIPANTS).document(participantId))
             delete(roomRef.collection(NICKNAMES).document(participant.nickname.nicknameKey()))
             participantAvailabilities.forEach { delete(availabilityDocument(room.id, participantId, it.date)) }
+            delete(roomRef.collection(DESTINATION_STATION_PROPOSALS).document(participantId))
+            delete(roomRef.collection(DESTINATION_STATION_VOTES).document(participantId))
         }
         local.leaveRoom(roomId, participantId)
     }
@@ -199,6 +292,12 @@ class FirestoreMeetingRepository(
         }
         loadStartLocations(room.id).forEach {
             batch.delete(rooms.document(room.id).collection(START_LOCATIONS).document(it.participantId))
+        }
+        loadDestinationStationProposals(room.id).forEach {
+            batch.delete(rooms.document(room.id).collection(DESTINATION_STATION_PROPOSALS).document(it.participantId))
+        }
+        loadDestinationStationVotes(room.id).forEach {
+            batch.delete(rooms.document(room.id).collection(DESTINATION_STATION_VOTES).document(it.participantId))
         }
         batch.delete(roomCodes.document(room.id.normalizedRoomCode()))
         batch.delete(rooms.document(room.id))
@@ -242,6 +341,25 @@ class FirestoreMeetingRepository(
         )
         local.confirmDate(room.id, date)
     }
+    override suspend fun confirmMeetingWithoutPlace(roomId: String) {
+        val room = getRoom(roomId) ?: throw IllegalArgumentException("방 정보를 찾을 수 없습니다.")
+        require(room.confirmedDate != null) { "날짜를 먼저 확정해주세요." }
+        val previous = rooms.document(room.id).get().data<FirestoreMeetingRoom>()
+        val updated = room.copy(
+            status = MeetingStatus.MEETING_CONFIRMED,
+            selectedAreaCandidateId = null,
+            confirmedPlace = null,
+            updatedAt = kotlin.time.Clock.System.now(),
+        )
+        rooms.document(room.id).set(
+            FirestoreMeetingRoom.from(
+                room = updated,
+                participantCount = loadParticipants(room.id).size,
+                hostAuthUid = previous.hostAuthUid,
+            ),
+        )
+        local.confirmMeetingWithoutPlace(room.id)
+    }
     override suspend fun saveStartLocation(location: UserStartLocation) {
         val room = getRoom(location.roomId) ?: throw IllegalArgumentException("방 정보를 찾을 수 없습니다.")
         rooms.document(room.id).collection(START_LOCATIONS).document(location.participantId).set(FirestoreStartLocation.from(location))
@@ -252,6 +370,51 @@ class FirestoreMeetingRepository(
     override fun selectAreaCandidate(roomId: String, candidateId: String) = local.selectAreaCandidate(roomId, candidateId)
     override fun savePlaceCandidates(roomId: String, candidates: List<ScoredPlaceCandidate>) = local.savePlaceCandidates(roomId, candidates)
     override fun savePlaceVote(roomId: String, placeId: String, participantId: String, voteType: PlaceVoteType) = local.savePlaceVote(roomId, placeId, participantId, voteType)
+    override suspend fun saveDestinationStationProposal(proposal: DestinationStationProposal) {
+        val room = getRoom(proposal.roomId) ?: throw IllegalArgumentException("방 정보를 찾을 수 없습니다.")
+        val roomRef = rooms.document(room.id)
+        val previous = roomRef.get().data<FirestoreMeetingRoom>()
+        val normalized = proposal.copy(roomId = room.id)
+        val updatedRoom = room.copy(
+            status = MeetingStatus.PLACE_SELECTING,
+            confirmedPlace = null,
+            updatedAt = proposal.updatedAt,
+        )
+        val batch = firestore.batch()
+        batch.set(
+            roomRef,
+            FirestoreMeetingRoom.from(updatedRoom, loadParticipants(room.id).size, previous.hostAuthUid),
+        )
+        batch.set(
+            roomRef.collection(DESTINATION_STATION_PROPOSALS).document(proposal.participantId),
+            FirestoreDestinationStationProposal.from(normalized),
+        )
+        batch.commit()
+        local.saveDestinationStationProposal(normalized)
+    }
+
+    override suspend fun saveDestinationStationVote(vote: DestinationStationVote) {
+        val room = getRoom(vote.roomId) ?: throw IllegalArgumentException("방 정보를 찾을 수 없습니다.")
+        require(getDestinationStationProposals(room.id).any { it.station.id == vote.stationId }) {
+            "현재 후보 목록에 없는 역입니다."
+        }
+        val roomRef = rooms.document(room.id)
+        val previous = roomRef.get().data<FirestoreMeetingRoom>()
+        val normalized = vote.copy(roomId = room.id)
+        val updatedRoom = room.copy(status = MeetingStatus.PLACE_SELECTING, updatedAt = vote.updatedAt)
+        val batch = firestore.batch()
+        batch.set(
+            roomRef,
+            FirestoreMeetingRoom.from(updatedRoom, loadParticipants(room.id).size, previous.hostAuthUid),
+        )
+        batch.set(
+            roomRef.collection(DESTINATION_STATION_VOTES).document(vote.participantId),
+            FirestoreDestinationStationVote.from(normalized),
+        )
+        batch.commit()
+        local.saveDestinationStationVote(normalized)
+    }
+
     override suspend fun confirmPlace(roomId: String, place: PlaceCandidate) {
         val room = getRoom(roomId) ?: throw IllegalArgumentException("방 정보를 찾을 수 없습니다.")
         val previous = rooms.document(room.id).get().data<FirestoreMeetingRoom>()
@@ -278,6 +441,16 @@ class FirestoreMeetingRepository(
 
     private suspend fun loadStartLocations(roomId: String): List<UserStartLocation> =
         rooms.document(roomId).collection(START_LOCATIONS).get().documents.map { it.data<FirestoreStartLocation>().toDomain() }
+
+    private suspend fun loadDestinationStationProposals(roomId: String): List<DestinationStationProposal> =
+        rooms.document(roomId).collection(DESTINATION_STATION_PROPOSALS).get().documents.map {
+            it.data<FirestoreDestinationStationProposal>().toDomain()
+        }
+
+    private suspend fun loadDestinationStationVotes(roomId: String): List<DestinationStationVote> =
+        rooms.document(roomId).collection(DESTINATION_STATION_VOTES).get().documents.map {
+            it.data<FirestoreDestinationStationVote>().toDomain()
+        }
 
     private fun availabilityDocument(roomId: String, participantId: String, date: LocalDate) =
         rooms.document(roomId).collection(AVAILABILITIES).document("$participantId-${date}")
@@ -311,8 +484,11 @@ class FirestoreMeetingRepository(
         }
     }
 
-    private fun currentAuthUid(): String =
-        requireNotNull(Firebase.auth.currentUser?.uid) { "로그인 정보를 확인할 수 없습니다." }
+    private fun currentAuthUid(): String {
+        val user = requireNotNull(Firebase.auth.currentUser) { "로그인 정보를 확인할 수 없습니다." }
+        require(!user.isAnonymous) { "Google 또는 Apple 계정으로 로그인해주세요." }
+        return user.uid
+    }
 
     private val rooms get() = firestore.collection(ROOMS)
     private val roomCodes get() = firestore.collection(ROOM_CODES)
@@ -324,7 +500,11 @@ class FirestoreMeetingRepository(
         const val PARTICIPANTS = "participants"
         const val AVAILABILITIES = "availabilities"
         const val START_LOCATIONS = "startLocations"
+        const val DESTINATION_STATION_PROPOSALS = "destinationStationProposals"
+        const val DESTINATION_STATION_VOTES = "destinationStationVotes"
         const val NICKNAMES = "nicknameKeys"
+        const val USERS = "users"
+        const val FRIENDS = "friends"
     }
 }
 
@@ -451,9 +631,18 @@ private data class FirestoreParticipant(
     val nickname: String = "",
     val isHost: Boolean = false,
     val authUid: String? = null,
+    val isInvited: Boolean = false,
     val joinedAt: String = "",
 ) {
-    fun toDomain(): Participant = Participant(id, roomId, nickname, isHost, joinedAt.parseFirestoreInstant())
+    fun toDomain(): Participant = Participant(
+        id = id,
+        roomId = roomId,
+        nickname = nickname,
+        isHost = isHost,
+        joinedAt = joinedAt.parseFirestoreInstant(),
+        accountId = authUid,
+        isInvited = isInvited,
+    )
 
     companion object {
         fun from(participant: Participant, authUid: String) = FirestoreParticipant(
@@ -462,9 +651,25 @@ private data class FirestoreParticipant(
             nickname = participant.nickname,
             isHost = participant.isHost,
             authUid = authUid,
+            isInvited = participant.isInvited,
             joinedAt = participant.joinedAt.toKoreaIsoString(),
         )
     }
+}
+
+@Serializable
+private data class FirestoreFriend(
+    val userId: String = "",
+    val nickname: String = "",
+    val sharedMeetingCount: Int = 0,
+    val lastMetAt: String = "",
+) {
+    fun toDomain() = FriendProfile(
+        userId = userId,
+        nickname = nickname,
+        sharedMeetingCount = sharedMeetingCount,
+        lastMetAt = lastMetAt.parseFirestoreInstant(),
+    )
 }
 
 @Serializable
@@ -531,6 +736,64 @@ private data class FirestoreStartLocation(
 }
 
 @Serializable
+private data class FirestoreDestinationStationProposal(
+    val roomId: String = "",
+    val participantId: String = "",
+    val stationId: String = "",
+    val stationName: String = "",
+    val latitude: Double = 0.0,
+    val longitude: Double = 0.0,
+    val lines: List<String> = emptyList(),
+    val region: String = "",
+    val updatedAt: String = "",
+) {
+    fun toDomain(): DestinationStationProposal = DestinationStationProposal(
+        roomId = roomId,
+        participantId = participantId,
+        station = TransitStation(stationId, stationName, latitude, longitude, lines, region),
+        updatedAt = updatedAt.parseFirestoreInstant(),
+    )
+
+    companion object {
+        fun from(proposal: DestinationStationProposal) = FirestoreDestinationStationProposal(
+            roomId = proposal.roomId,
+            participantId = proposal.participantId,
+            stationId = proposal.station.id,
+            stationName = proposal.station.name,
+            latitude = proposal.station.latitude,
+            longitude = proposal.station.longitude,
+            lines = proposal.station.lines,
+            region = proposal.station.region,
+            updatedAt = proposal.updatedAt.toKoreaIsoString(),
+        )
+    }
+}
+
+@Serializable
+private data class FirestoreDestinationStationVote(
+    val roomId: String = "",
+    val participantId: String = "",
+    val stationId: String = "",
+    val updatedAt: String = "",
+) {
+    fun toDomain(): DestinationStationVote = DestinationStationVote(
+        roomId = roomId,
+        participantId = participantId,
+        stationId = stationId,
+        updatedAt = updatedAt.parseFirestoreInstant(),
+    )
+
+    companion object {
+        fun from(vote: DestinationStationVote) = FirestoreDestinationStationVote(
+            roomId = vote.roomId,
+            participantId = vote.participantId,
+            stationId = vote.stationId,
+            updatedAt = vote.updatedAt.toKoreaIsoString(),
+        )
+    }
+}
+
+@Serializable
 private data class FirestoreRoomCode(
     val code: String = "",
     val roomId: String = "",
@@ -544,8 +807,6 @@ private data class FirestoreNickname(
 
 private fun String.normalizedRoomCode(): String = trim().uppercase()
 private fun String.nicknameKey(): String = trim().lowercase()
-
-private val KoreaTimeZone = TimeZone.of("Asia/Seoul")
 
 private fun Instant.toKoreaIsoString(): String = toLocalDateTime(KoreaTimeZone).formatIsoWithOffset()
 
