@@ -30,7 +30,13 @@ actual fun rememberAuthPlatform(): AuthPlatform {
             try {
                 val account = GoogleSignIn.getSignedInAccountFromIntent(result.data).getResult(ApiException::class.java)
                 val credential = GoogleAuthProvider.credential(idToken = account.idToken, accessToken = null)
-                val user = Firebase.auth.signInWithCredential(credential).user
+                val anonymousUser = Firebase.auth.currentUser?.takeIf { it.isAnonymous }
+                val user = if (anonymousUser == null) {
+                    Firebase.auth.signInWithCredential(credential).user
+                } else {
+                    runCatching { anonymousUser.linkWithCredential(credential).user }
+                        .getOrElse { Firebase.auth.signInWithCredential(credential).user }
+                }
                 pending.complete(user.requireSession())
             } catch (error: Throwable) {
                 pending.completeExceptionally(error)
@@ -55,9 +61,6 @@ actual fun rememberAuthPlatform(): AuthPlatform {
             },
             signInWithApple = {
                 error("Apple 로그인은 iOS에서만 지원됩니다.")
-            },
-            signInAnonymously = {
-                Firebase.auth.signInAnonymously().user.requireSession()
             },
             signOut = {
                 Firebase.auth.signOut()

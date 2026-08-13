@@ -45,9 +45,6 @@ actual fun rememberAuthPlatform(): AuthPlatform = remember {
         signInWithApple = {
             signInWithAppleProvider()
         },
-        signInAnonymously = {
-            Firebase.auth.signInAnonymously().user.requireSession()
-        },
         signOut = {
             Firebase.auth.signOut()
         },
@@ -61,7 +58,7 @@ actual fun rememberAuthPlatform(): AuthPlatform = remember {
 @OptIn(ExperimentalForeignApi::class)
 private suspend fun signInWithOAuthProvider(providerId: String): AuthSession {
     val credential = OAuthProvider(provider = providerId).requestCredential()
-    return Firebase.auth.signInWithCredential(AuthCredential(credential)).user.requireSession()
+    return signInOrLink(AuthCredential(credential))
 }
 
 @OptIn(ExperimentalForeignApi::class)
@@ -73,7 +70,18 @@ private suspend fun signInWithAppleProvider(): AuthSession {
         IDToken = idToken,
         rawNonce = rawNonce,
     )
-    return Firebase.auth.signInWithCredential(AuthCredential(credential)).user.requireSession()
+    return signInOrLink(AuthCredential(credential))
+}
+
+private suspend fun signInOrLink(credential: AuthCredential): AuthSession {
+    val anonymousUser = Firebase.auth.currentUser?.takeIf { it.isAnonymous }
+    val user = if (anonymousUser == null) {
+        Firebase.auth.signInWithCredential(credential).user
+    } else {
+        runCatching { anonymousUser.linkWithCredential(credential).user }
+            .getOrElse { Firebase.auth.signInWithCredential(credential).user }
+    }
+    return user.requireSession()
 }
 
 @OptIn(ExperimentalForeignApi::class)

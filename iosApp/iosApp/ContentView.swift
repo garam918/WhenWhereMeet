@@ -14,5 +14,12 @@ struct ContentView: View {
     var body: some View {
         ComposeView()
             .ignoresSafeArea()
+            .onOpenURL { url in
+                MainViewControllerKt.handleDeepLinkUrl(url: url.absoluteString)
+            }
+            .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
+                guard let url = activity.webpageURL else { return }
+                MainViewControllerKt.handleDeepLinkUrl(url: url.absoluteString)
+            }
     }
 }

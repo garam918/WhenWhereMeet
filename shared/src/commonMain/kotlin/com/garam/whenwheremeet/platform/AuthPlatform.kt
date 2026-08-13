@@ -14,7 +14,6 @@ data class AuthPlatform(
     val showAppleSignIn: Boolean,
     val signInWithGoogle: suspend () -> AuthSession,
     val signInWithApple: suspend () -> AuthSession,
-    val signInAnonymously: suspend () -> AuthSession,
     val signOut: suspend () -> Unit,
     val deleteAccount: suspend () -> Unit,
 )
