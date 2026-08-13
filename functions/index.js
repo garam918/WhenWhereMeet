@@ -1,8 +1,87 @@
 const {onRequest} = require("firebase-functions/v2/https");
+const {onDocumentWritten} = require("firebase-functions/v2/firestore");
 const logger = require("firebase-functions/logger");
+const {initializeApp} = require("firebase-admin/app");
+const {getFirestore, FieldValue} = require("firebase-admin/firestore");
+
+initializeApp();
 
 const GEMINI_MODEL = "gemini-2.5-flash";
 const REGION = "asia-northeast3";
+
+exports.syncMeetingFriends = onDocumentWritten(
+  {
+    document: "meetingRooms/{roomId}/participants/{participantId}",
+    region: REGION,
+  },
+  async (event) => {
+    const before = event.data.before.exists ? event.data.before.data() : null;
+    const after = event.data.after.exists ? event.data.after.data() : null;
+    const becameParticipant = after &&
+      after.isInvited !== true &&
+      (!before || before.isInvited === true);
+    if (!becameParticipant || !after.authUid) return;
+
+    const roomId = event.params.roomId;
+    const participants = await getFirestore()
+      .collection("meetingRooms")
+      .doc(roomId)
+      .collection("participants")
+      .get();
+    const others = participants.docs
+      .map((document) => document.data())
+      .filter((participant) => participant.authUid &&
+        participant.authUid !== after.authUid &&
+        participant.isInvited !== true);
+
+    await Promise.all(others.map((other) => connectMeetingFriends({
+      roomId,
+      joinedParticipant: after,
+      otherParticipant: other,
+    })));
+  },
+);
+
+async function connectMeetingFriends({roomId, joinedParticipant, otherParticipant}) {
+  const firestore = getFirestore();
+  const userIds = [joinedParticipant.authUid, otherParticipant.authUid].sort();
+  const connectionId = `${roomId}_${userIds[0]}_${userIds[1]}`;
+  const connectionRef = firestore.collection("meetingFriendConnections").doc(connectionId);
+  const joinedFriendRef = firestore
+    .collection("users")
+    .doc(joinedParticipant.authUid)
+    .collection("friends")
+    .doc(otherParticipant.authUid);
+  const otherFriendRef = firestore
+    .collection("users")
+    .doc(otherParticipant.authUid)
+    .collection("friends")
+    .doc(joinedParticipant.authUid);
+  const metAt = joinedParticipant.joinedAt || new Date().toISOString();
+
+  await firestore.runTransaction(async (transaction) => {
+    if ((await transaction.get(connectionRef)).exists) return;
+    transaction.set(connectionRef, {
+      roomId,
+      userIds,
+      createdAt: metAt,
+    });
+    transaction.set(joinedFriendRef, {
+      userId: otherParticipant.authUid,
+      nickname: otherParticipant.nickname || "친구",
+      sharedMeetingCount: FieldValue.increment(1),
+      lastMeetingId: roomId,
+      lastMetAt: metAt,
+    }, {merge: true});
+    transaction.set(otherFriendRef, {
+      userId: joinedParticipant.authUid,
+      nickname: joinedParticipant.nickname || "친구",
+      sharedMeetingCount: FieldValue.increment(1),
+      lastMeetingId: roomId,
+      lastMetAt: metAt,
+    }, {merge: true});
+  });
+}
 
 exports.recommendPlaceCandidates = onRequest(
   {

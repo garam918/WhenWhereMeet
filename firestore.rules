@@ -3,7 +3,8 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     function signedIn() {
-      return request.auth != null;
+      return request.auth != null
+        && request.auth.token.firebase.sign_in_provider != 'anonymous';
     }
 
     function isRoomHost(roomId) {
@@ -11,6 +12,20 @@ service cloud.firestore {
         && exists(/databases/$(database)/documents/meetingRooms/$(roomId))
         && exists(/databases/$(database)/documents/meetingRooms/$(roomId)/participants/$(get(/databases/$(database)/documents/meetingRooms/$(roomId)).data.hostParticipantId))
         && get(/databases/$(database)/documents/meetingRooms/$(roomId)/participants/$(get(/databases/$(database)/documents/meetingRooms/$(roomId)).data.hostParticipantId)).data.authUid == request.auth.uid;
+    }
+
+    function isParticipant(roomId, participantId) {
+      return signedIn()
+        && exists(/databases/$(database)/documents/meetingRooms/$(roomId)/participants/$(participantId))
+        && get(/databases/$(database)/documents/meetingRooms/$(roomId)/participants/$(participantId)).data.authUid == request.auth.uid;
+    }
+
+    function isRoomHostAfter(roomId) {
+      return signedIn()
+        && existsAfter(/databases/$(database)/documents/meetingRooms/$(roomId))
+        && existsAfter(/databases/$(database)/documents/meetingRooms/$(roomId)/participants/$(getAfter(/databases/$(database)/documents/meetingRooms/$(roomId)).data.hostParticipantId))
+        && getAfter(/databases/$(database)/documents/meetingRooms/$(roomId)).data.hostAuthUid == request.auth.uid
+        && getAfter(/databases/$(database)/documents/meetingRooms/$(roomId)/participants/$(getAfter(/databases/$(database)/documents/meetingRooms/$(roomId)).data.hostParticipantId)).data.authUid == request.auth.uid;
     }
 
     match /roomCodes/{code} {
@@ -27,7 +42,8 @@ service cloud.firestore {
       allow create: if signedIn()
         && request.resource.data.id == roomId
         && request.resource.data.hostAuthUid == request.auth.uid
-        && request.resource.data.participantCount == 1
+        && request.resource.data.participantCount >= 1
+        && request.resource.data.participantCount <= request.resource.data.maxParticipants
         && request.resource.data.maxParticipants >= 2
         && request.resource.data.maxParticipants <= 8
         && existsAfter(/databases/$(database)/documents/meetingRooms/$(roomId)/participants/$(request.resource.data.hostParticipantId))
@@ -53,13 +69,34 @@ service cloud.firestore {
         allow create: if signedIn()
           && request.resource.data.id == participantId
           && request.resource.data.roomId == roomId
-          && request.resource.data.authUid == request.auth.uid;
+          && (
+            (
+              request.resource.data.authUid == request.auth.uid
+              && request.resource.data.get('isInvited', false) == false
+            )
+            ||
+            (
+              request.resource.data.get('isInvited', false) == true
+              && isRoomHostAfter(roomId)
+            )
+          );
         allow update: if signedIn()
-          && resource.data.get('authUid', null) == null
-          && request.resource.data.authUid == request.auth.uid
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['authUid'])
-          && get(/databases/$(database)/documents/meetingRooms/$(roomId)).data.hostParticipantId == participantId
-          && get(/databases/$(database)/documents/meetingRooms/$(roomId)).data.hostAuthUid == request.auth.uid;
+          && (
+            (
+              resource.data.get('authUid', null) == null
+              && request.resource.data.authUid == request.auth.uid
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['authUid'])
+              && get(/databases/$(database)/documents/meetingRooms/$(roomId)).data.hostParticipantId == participantId
+              && get(/databases/$(database)/documents/meetingRooms/$(roomId)).data.hostAuthUid == request.auth.uid
+            )
+            ||
+            (
+              resource.data.authUid == request.auth.uid
+              && resource.data.get('isInvited', false) == true
+              && request.resource.data.get('isInvited', true) == false
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isInvited', 'joinedAt'])
+            )
+          );
         allow delete: if signedIn()
           && (
             resource.data.authUid == request.auth.uid ||
@@ -91,6 +128,26 @@ service cloud.firestore {
           );
       }
 
+      match /destinationStationProposals/{participantId} {
+        allow read: if signedIn();
+        allow create, update: if isParticipant(roomId, participantId)
+          && request.resource.data.roomId == roomId
+          && request.resource.data.participantId == participantId
+          && request.resource.data.stationId is string
+          && request.resource.data.stationName is string
+          && request.resource.data.lines is list;
+        allow delete: if isParticipant(roomId, participantId) || isRoomHost(roomId);
+      }
+
+      match /destinationStationVotes/{participantId} {
+        allow read: if signedIn();
+        allow create, update: if isParticipant(roomId, participantId)
+          && request.resource.data.roomId == roomId
+          && request.resource.data.participantId == participantId
+          && request.resource.data.stationId is string;
+        allow delete: if isParticipant(roomId, participantId) || isRoomHost(roomId);
+      }
+
       match /nicknameKeys/{nicknameKey} {
         allow read: if signedIn();
         allow create: if signedIn()
@@ -98,6 +155,15 @@ service cloud.firestore {
         allow delete: if signedIn();
         allow update: if false;
       }
+    }
+
+    match /users/{userId}/friends/{friendId} {
+      allow read: if signedIn() && request.auth.uid == userId;
+      allow write: if false;
+    }
+
+    match /meetingFriendConnections/{connectionId} {
+      allow read, write: if false;
     }
   }
 }

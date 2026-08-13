@@ -75,9 +75,22 @@ Authentication setup:
 
 - Android Google sign-in uses Firebase Auth with Google Sign-In and `androidApp/google-services.json`.
 - iOS Google and Apple sign-in use Firebase Auth OAuth providers from the shared iOS implementation.
-- Enable `Google`, `Apple`, and `Anonymous` providers in Firebase Console > Authentication > Sign-in method.
+- Web Google and Apple sign-in use Firebase Auth in the browser. Desktop browsers open a popup, while mobile browsers use a redirect flow.
+- The deployed web app reads its public Firebase config from Firebase Hosting's `/__/firebase/init.json`; do not hardcode a Web API key in `index.html`.
+- Enable `Google` and `Apple` providers in Firebase Console > Authentication > Sign-in method. Keep the `Anonymous` provider disabled; the app requires a signed-in account before any meeting data can be used.
+- Add every deployed web hostname (including `whenwheremeet.web.app` and any custom domain) to Firebase Authentication > Settings > Authorized domains.
+- Add `https://whenwheremeet.web.app/__/auth/handler` to the authorized redirect URIs of the Google OAuth web client. Add an equivalent URI before serving the app from another domain.
+- For Apple web sign-in, create an Apple Services ID, associate the website domain, and register `https://whenwheremeet.web.app/__/auth/handler` as a Return URL. Then enter the Services ID, Apple Team ID, Key ID, and private key in the Firebase Apple provider settings. Add equivalent Return URLs before serving the app from another domain.
 - For iOS, link Firebase iOS SDKs required by GitLive Firebase Auth in Xcode and add the Sign in with Apple capability to the app target.
 - If switching iOS Google sign-in to the native GoogleSignIn SDK later, make sure `GoogleService-Info.plist` includes `REVERSED_CLIENT_ID` and add that value as a URL scheme in `Info.plist`.
+
+Account meeting restore and invite links:
+
+- Each participant document stores the signed-in Firebase Auth UID. After login, Android, iOS, and web query the `participants` collection group and restore every meeting associated with that UID, including past and in-progress meetings.
+- Deploy both Firestore rules and indexes after changing them: `firebase deploy --only firestore:rules,firestore:indexes`.
+- Shared invitations use `https://whenwheremeet.web.app/join/{ROOM_CODE}`. Android App Links and iOS Universal Links open the installed app; Firebase Hosting serves the web app as the fallback.
+- Deploy Hosting after building the production web bundle so `/.well-known/assetlinks.json` and `/.well-known/apple-app-site-association` are reachable.
+- `assetlinks.json` currently contains the local debug certificate SHA-256. Add the Play App Signing and release certificate SHA-256 fingerprints before distributing a production Android build.
 
 ---
 

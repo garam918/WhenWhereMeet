@@ -1,0 +1,14 @@
+[
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.garam.whenwheremeet",
+      "sha256_cert_fingerprints": [
+        "52:02:64:89:75:32:5C:21:76:E7:0A:45:90:67:E7:93:80:AF:32:BB:45:49:30:71:FF:05:1F:35:11:75:92:03"
+      ]
+    }
+  }
+]
