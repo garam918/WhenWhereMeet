@@ -64,7 +64,7 @@ class HomeDashboardUseCasesTest {
     }
 
     @Test
-    fun upcomingConfirmedMeetingsAreSortedByNearestDateAndLimitedToThree() {
+    fun upcomingConfirmedMeetingsAreSortedByNearestDateWithoutDroppingMeetings() {
         val dashboard = BuildHomeDashboardUseCase()(
             meetings = listOf(
                 overview(room("d", MeetingStatus.PLACE_CONFIRMED, confirmedDate = LocalDate(2026, 6, 25))),
@@ -75,7 +75,50 @@ class HomeDashboardUseCasesTest {
             today = today,
         )
 
-        assertEquals(listOf("a", "b", "c"), dashboard.upcomingConfirmedMeetings.map { it.roomId })
+        assertEquals(listOf("a", "b", "c", "d"), dashboard.upcomingConfirmedMeetings.map { it.roomId })
+    }
+
+    @Test
+    fun summaryCountsUpcomingConfirmedMeetingsBeyondSevenDays() {
+        val dashboard = BuildHomeDashboardUseCase()(
+            meetings = listOf(
+                overview(room("later", MeetingStatus.PLACE_CONFIRMED, confirmedDate = LocalDate(2026, 7, 20))),
+                overview(room("past", MeetingStatus.PLACE_CONFIRMED, confirmedDate = LocalDate(2026, 6, 15))),
+            ),
+            today = today,
+        )
+
+        assertEquals(1, dashboard.summary.confirmedCount)
+    }
+
+    @Test
+    fun meetingConfirmedWithoutPlaceAppearsAsUpcomingConfirmed() {
+        val dashboard = BuildHomeDashboardUseCase()(
+            meetings = listOf(
+                overview(room("no-place", MeetingStatus.MEETING_CONFIRMED, confirmedDate = LocalDate(2026, 6, 18))),
+            ),
+            today = today,
+        )
+
+        assertEquals(1, dashboard.summary.confirmedCount)
+        assertEquals(listOf("no-place"), dashboard.upcomingConfirmedMeetings.map { it.roomId })
+        assertEquals("장소 미정", dashboard.upcomingConfirmedMeetings.single().placeText)
+    }
+
+    @Test
+    fun pastAndAllInProgressMeetingsRemainAvailableAfterAccountRestore() {
+        val inProgress = (1..4).map { index ->
+            overview(room("working-$index", MeetingStatus.COLLECTING_AVAILABILITY))
+        }
+        val dashboard = BuildHomeDashboardUseCase()(
+            meetings = inProgress + overview(
+                room("past", MeetingStatus.PLACE_CONFIRMED, confirmedDate = LocalDate(2026, 6, 15)),
+            ),
+            today = today,
+        )
+
+        assertEquals(4, dashboard.inProgressMeetings.size)
+        assertEquals(listOf("past"), dashboard.pastMeetings.map { it.roomId })
     }
 
     private fun overview(

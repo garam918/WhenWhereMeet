@@ -58,6 +58,23 @@ class CalendarMonthUseCasesTest {
     }
 
     @Test
+    fun confirmedFilterIncludesMeetingWithoutPlace() {
+        val result = BuildCalendarMonthUseCase()(
+            meetings = listOf(
+                overview(room("no-place", MeetingStatus.MEETING_CONFIRMED, confirmedDate = LocalDate(2026, 6, 18))),
+            ),
+            currentMonth = CalendarMonth(2026, 6),
+            selectedDate = LocalDate(2026, 6, 18),
+            today = today,
+            filter = CalendarFilter.CONFIRMED,
+        )
+
+        assertEquals(listOf("no-place"), result.selectedDateMeetings.map { it.roomId })
+        assertEquals(1, result.monthlySummary.confirmedCount)
+        assertTrue(result.selectedDateMeetings.single().isConfirmed)
+    }
+
+    @Test
     fun selectedDateMeetingsIncludeCandidateDateForInProgressRoom() {
         val result = BuildCalendarMonthUseCase()(
             meetings = listOf(
