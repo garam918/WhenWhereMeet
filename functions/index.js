@@ -8,10 +8,12 @@ initializeApp();
 
 const GEMINI_MODEL = "gemini-2.5-flash";
 const REGION = "asia-northeast3";
+const FIRESTORE_DATABASE_ID = "default";
 
 exports.syncMeetingFriends = onDocumentWritten(
   {
     document: "meetingRooms/{roomId}/participants/{participantId}",
+    database: FIRESTORE_DATABASE_ID,
     region: REGION,
   },
   async (event) => {
@@ -23,7 +25,7 @@ exports.syncMeetingFriends = onDocumentWritten(
     if (!becameParticipant || !after.authUid) return;
 
     const roomId = event.params.roomId;
-    const participants = await getFirestore()
+    const participants = await getFirestore(FIRESTORE_DATABASE_ID)
       .collection("meetingRooms")
       .doc(roomId)
       .collection("participants")
@@ -43,7 +45,7 @@ exports.syncMeetingFriends = onDocumentWritten(
 );
 
 async function connectMeetingFriends({roomId, joinedParticipant, otherParticipant}) {
-  const firestore = getFirestore();
+  const firestore = getFirestore(FIRESTORE_DATABASE_ID);
   const userIds = [joinedParticipant.authUid, otherParticipant.authUid].sort();
   const connectionId = `${roomId}_${userIds[0]}_${userIds[1]}`;
   const connectionRef = firestore.collection("meetingFriendConnections").doc(connectionId);
