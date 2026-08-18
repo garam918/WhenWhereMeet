@@ -47,6 +47,7 @@ import com.garam.whenwheremeet.presentation.component.WwmOutlineButton
 import com.garam.whenwheremeet.presentation.component.WwmPrimaryButton
 import com.garam.whenwheremeet.presentation.component.WwmSectionHeader
 import com.garam.whenwheremeet.presentation.component.WwmSoftIndigo
+import com.garam.whenwheremeet.presentation.component.WwmSurface
 import com.garam.whenwheremeet.presentation.component.WwmText
 import com.garam.whenwheremeet.presentation.state.HomeDashboardUiState
 import com.garam.whenwheremeet.presentation.state.HomeActionItemUiModel
@@ -206,8 +207,8 @@ private fun DesktopHomeHeader(onCreateRoom: () -> Unit, onJoinRoom: () -> Unit) 
             Text("오늘도 완벽한 모임을 준비해 볼까요?", color = WwmMuted, fontSize = 16.sp)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            WwmOutlineButton("방 코드 참여", onClick = onJoinRoom)
-            WwmPrimaryButton("약속 만들기", onClick = onCreateRoom, modifier = Modifier.width(150.dp))
+            WwmOutlineButton("방 코드 참여", onClick = onJoinRoom, modifier = Modifier.height(52.dp))
+            WwmPrimaryButton("약속 만들기", onClick = onCreateRoom, modifier = Modifier.width(150.dp).height(52.dp))
         }
     }
 }
@@ -220,8 +221,8 @@ private fun HomeHeader(onCreateRoom: () -> Unit, onJoinRoom: () -> Unit) {
         Text("안녕하세요,\n약속을 정해볼까요?", color = WwmText, fontSize = 27.sp, lineHeight = 35.sp, fontWeight = FontWeight.Bold)
         Text("날짜부터 장소까지 한 번에 정리해드려요.", color = WwmMuted, fontSize = 14.sp)
         Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            WwmPrimaryButton("＋ 약속 만들기", onClick = onCreateRoom, modifier = Modifier.weight(1f))
-            WwmOutlineButton("방 코드로 참여", onClick = onJoinRoom, modifier = Modifier.weight(1f))
+            WwmPrimaryButton("＋ 약속 만들기", onClick = onCreateRoom, modifier = Modifier.weight(1f).height(52.dp))
+            WwmOutlineButton("방 코드로 참여", onClick = onJoinRoom, modifier = Modifier.weight(1f).height(52.dp))
         }
     }
 }
@@ -242,7 +243,7 @@ private fun HomeNextActionCard(item: HomeActionItemUiModel, onOpenRoom: (String)
         Text(item.title, color = WwmText, fontSize = 19.sp, fontWeight = FontWeight.SemiBold)
         Text(item.description, color = WwmMuted, fontSize = 14.sp, lineHeight = 20.sp)
         Box(
-            Modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(12.dp))
+            Modifier.fillMaxWidth().background(WwmSurface, RoundedCornerShape(12.dp))
                 .clickable { onOpenRoom(item.roomId) }.padding(13.dp),
             contentAlignment = Alignment.Center,
         ) {
