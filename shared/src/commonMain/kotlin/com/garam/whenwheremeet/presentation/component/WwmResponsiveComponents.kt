@@ -44,7 +44,7 @@ fun WwmDesktopTopBar(
     onCreateRoom: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(modifier.fillMaxWidth().background(Color.White)) {
+    Column(modifier.fillMaxWidth().background(WwmSurface)) {
         Row(
             Modifier.fillMaxWidth().height(64.dp).widthIn(max = WwmDesktopContentMaxWidth)
                 .align(Alignment.CenterHorizontally).padding(horizontal = 24.dp),
@@ -114,7 +114,7 @@ fun WwmDesktopFlowTopBar(
     onShare: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(modifier.fillMaxWidth().background(Color.White)) {
+    Column(modifier.fillMaxWidth().background(WwmSurface)) {
         Row(
             Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 28.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
