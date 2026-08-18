@@ -46,6 +46,7 @@ actual fun rememberAuthPlatform(): AuthPlatform {
 
     return remember(context, launcher) {
         AuthPlatform(
+            showGoogleSignIn = true,
             showAppleSignIn = false,
             signInWithGoogle = {
                 val webClientId = context.firebaseWebClientId()
