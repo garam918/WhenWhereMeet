@@ -1,14 +1,166 @@
 const {onRequest} = require("firebase-functions/v2/https");
 const {onDocumentWritten} = require("firebase-functions/v2/firestore");
+const {onSchedule} = require("firebase-functions/v2/scheduler");
 const logger = require("firebase-functions/logger");
 const {initializeApp} = require("firebase-admin/app");
 const {getFirestore, FieldValue} = require("firebase-admin/firestore");
+const {getMessaging} = require("firebase-admin/messaging");
 
 initializeApp();
 
 const GEMINI_MODEL = "gemini-2.5-flash";
 const REGION = "asia-northeast3";
 const FIRESTORE_DATABASE_ID = "default";
+const KOREA_TIME_ZONE = "Asia/Seoul";
+const CONFIRMED_STATUSES = new Set(["PLACE_CONFIRMED", "MEETING_CONFIRMED"]);
+
+exports.notifyMeetingConfirmed = onDocumentWritten(
+  {
+    document: "meetingRooms/{roomId}",
+    database: FIRESTORE_DATABASE_ID,
+    region: REGION,
+  },
+  async (event) => {
+    const before = event.data.before.exists ? event.data.before.data() : null;
+    const after = event.data.after.exists ? event.data.after.data() : null;
+    const wasConfirmed = before && CONFIRMED_STATUSES.has(before.status);
+    const isConfirmed = after && CONFIRMED_STATUSES.has(after.status);
+    if (!after || wasConfirmed || !isConfirmed || !after.confirmedDate) return;
+
+    const dateLabel = toKoreanDateLabel(after.confirmedDate);
+    const placeName = after.confirmedPlace && after.confirmedPlace.name;
+    const placeText = placeName ? ` 장소는 ${placeName}이에요.` : "";
+    await sendMeetingPush({
+      roomId: event.params.roomId,
+      title: "약속이 확정됐어요",
+      body: `${after.title || "약속"} 일정이 ${dateLabel}로 확정됐어요.${placeText}`,
+      type: "meeting_confirmed",
+    });
+  },
+);
+
+exports.notifyMeetingsOnTheDay = onSchedule(
+  {
+    schedule: "0 9 * * *",
+    timeZone: KOREA_TIME_ZONE,
+    region: REGION,
+  },
+  async () => {
+    const today = dateStringInTimeZone(new Date(), KOREA_TIME_ZONE);
+    const snapshot = await getFirestore(FIRESTORE_DATABASE_ID)
+      .collection("meetingRooms")
+      .where("confirmedDate", "==", today)
+      .get();
+    const meetings = snapshot.docs
+      .map((document) => ({roomId: document.id, ...document.data()}))
+      .filter((room) => CONFIRMED_STATUSES.has(room.status));
+
+    await Promise.all(meetings.map((room) => {
+      const placeName = room.confirmedPlace && room.confirmedPlace.name;
+      const placeText = placeName ? ` 장소는 ${placeName}이에요.` : "";
+      return sendMeetingPush({
+        roomId: room.roomId,
+        title: "오늘은 약속이 있는 날이에요",
+        body: `${room.title || "약속"} 일정을 확인해주세요.${placeText}`,
+        type: "meeting_day",
+      });
+    }));
+  },
+);
+
+async function sendMeetingPush({roomId, title, body, type}) {
+  const firestore = getFirestore(FIRESTORE_DATABASE_ID);
+  const participants = await firestore
+    .collection("meetingRooms")
+    .doc(roomId)
+    .collection("participants")
+    .get();
+  const userIds = [...new Set(participants.docs
+    .map((document) => document.data().authUid)
+    .filter(Boolean))];
+  const deviceSnapshots = await Promise.all(userIds.map((userId) => firestore
+    .collection("users")
+    .doc(userId)
+    .collection("notificationDevices")
+    .get()));
+  const targets = deviceSnapshots.flatMap((snapshot) => snapshot.docs
+    .map((document) => ({
+      ref: document.ref,
+      token: document.data().token,
+    }))
+    .filter((device) => typeof device.token === "string" && device.token));
+  if (targets.length === 0) return;
+
+  const deepLinkUri = `https://whenwheremeet.web.app/join/${roomId}`;
+  const invalidDeviceRefs = [];
+  for (let start = 0; start < targets.length; start += 500) {
+    const chunk = targets.slice(start, start + 500);
+    const response = await getMessaging().sendEach(chunk.map((device) => ({
+      token: device.token,
+      data: {
+        title,
+        body,
+        type,
+        roomId,
+        deepLinkUri,
+        groupKey: "meeting_updates",
+      },
+      android: {priority: "high"},
+      apns: {
+        headers: {"apns-priority": "10"},
+        payload: {
+          aps: {
+            alert: {title, body},
+            sound: "default",
+            "thread-id": "meeting_updates",
+          },
+          deepLinkUri,
+          type,
+          roomId,
+        },
+      },
+    })));
+    response.responses.forEach((result, index) => {
+      const code = result.error && result.error.code;
+      if (code === "messaging/registration-token-not-registered" ||
+          code === "messaging/invalid-registration-token") {
+        invalidDeviceRefs.push(chunk[index].ref);
+      }
+    });
+  }
+
+  if (invalidDeviceRefs.length > 0) {
+    for (let start = 0; start < invalidDeviceRefs.length; start += 500) {
+      const batch = firestore.batch();
+      invalidDeviceRefs.slice(start, start + 500)
+        .forEach((reference) => batch.delete(reference));
+      await batch.commit();
+    }
+  }
+  logger.info("Meeting notifications sent", {
+    roomId,
+    type,
+    targetCount: targets.length,
+    invalidTokenCount: invalidDeviceRefs.length,
+  });
+}
+
+function dateStringInTimeZone(date, timeZone) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${value.year}-${value.month}-${value.day}`;
+}
+
+function toKoreanDateLabel(date) {
+  const [year, month, day] = String(date).split("-").map(Number);
+  if (!year || !month || !day) return String(date);
+  return `${year}년 ${month}월 ${day}일`;
+}
 
 exports.syncMeetingFriends = onDocumentWritten(
   {
