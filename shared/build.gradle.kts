@@ -87,6 +87,7 @@ kotlin {
         val mobileMain by creating {
             dependsOn(commonMain)
             dependencies {
+                implementation(libs.alarmee.push)
                 implementation(libs.firebase.auth)
                 implementation(libs.firebase.firestore)
             }
