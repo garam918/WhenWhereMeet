@@ -11,6 +11,7 @@ data class AuthSession(
 )
 
 data class AuthPlatform(
+    val showGoogleSignIn: Boolean,
     val showAppleSignIn: Boolean,
     val signInWithGoogle: suspend () -> AuthSession,
     val signInWithApple: suspend () -> AuthSession,
