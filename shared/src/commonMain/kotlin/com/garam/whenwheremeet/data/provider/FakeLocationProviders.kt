@@ -15,8 +15,25 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 object SampleLocationData {
-    val searchLocations = MetropolitanTransitData.stations.map {
+    val searchLocations = NationalTransitStationData.stations.map {
         location(it.id, it.name, it.latitude, it.longitude, "${it.region} · ${it.lines.joinToString("/")}")
+    }
+
+    val recommendedSearchLocations: List<LocationSearchResult> = listOf(
+        "서울" to "서울역",
+        "서울" to "강남역",
+        "서울" to "홍대입구역",
+        "경기" to "수원역",
+        "인천" to "부평역",
+        "부산" to "서면역",
+        "대구" to "반월당역",
+        "대전" to "대전역",
+        "광주" to "광주송정역",
+        "울산" to "태화강역",
+    ).mapNotNull { (region, stationName) ->
+        searchLocations.firstOrNull {
+            it.label == stationName && it.address.orEmpty().startsWith(region)
+        }
     }
 
     val areaCandidates = MetropolitanTransitData.areaCandidates
@@ -36,19 +53,67 @@ object SampleLocationData {
 }
 
 class FakeLocationSearchProvider : LocationSearchProvider {
-    override suspend fun search(query: String): List<LocationSearchResult> {
-        val normalized = query.trim()
-        return if (normalized.isBlank()) SampleLocationData.searchLocations else {
-            SampleLocationData.searchLocations.filter {
-                it.label.contains(normalized, ignoreCase = true) ||
-                    it.address.orEmpty().contains(normalized, ignoreCase = true)
-            }
+    private val stationSearchEntries by lazy {
+        SampleLocationData.searchLocations.map { location ->
+            StationSearchEntry(location, location.stationSearchKeys())
         }
     }
 
+    override suspend fun search(query: String): List<LocationSearchResult> {
+        val normalizedQuery = query.normalizeStationSearchTerm()
+        if (normalizedQuery.isBlank()) return SampleLocationData.recommendedSearchLocations
+
+        return stationSearchEntries.asSequence()
+            .filter { entry -> entry.searchKeys.any { it.contains(normalizedQuery) } }
+            .sortedWith(
+                compareBy<StationSearchEntry> {
+                    it.location.stationSearchRank(normalizedQuery)
+                }.thenBy { it.location.label }
+                    .thenBy { it.location.address.orEmpty() },
+            )
+            .map { it.location }
+            .toList()
+    }
+
     override suspend fun getCurrentLocation(): LocationSearchResult =
-        SampleLocationData.searchLocations.first { it.id == "seoul" }
+        SampleLocationData.searchLocations.first {
+            it.label == "서울역" && it.address.orEmpty().startsWith("서울")
+        }
 }
+
+private data class StationSearchEntry(
+    val location: LocationSearchResult,
+    val searchKeys: List<String>,
+)
+
+private fun LocationSearchResult.stationSearchKeys(): List<String> {
+    val metadata = address.orEmpty()
+    val region = metadata.substringBefore(" · ")
+    val province = region.substringBefore(' ')
+    val lines = metadata.substringAfter(" · ", "").split('/').filter(String::isNotBlank)
+    return (listOf(
+        label,
+        metadata,
+        "$region $label",
+        "$province $label",
+        "$label $region",
+    ) + lines.flatMap { line -> listOf("$line $label", "$label $line") })
+        .map { it.normalizeStationSearchTerm() }
+}
+
+private fun LocationSearchResult.stationSearchRank(normalizedQuery: String): Int {
+    val normalizedLabel = label.normalizeStationSearchTerm()
+    val queryWithoutStationSuffix = normalizedQuery.removeSuffix("역")
+    return when {
+        normalizedLabel == normalizedQuery || normalizedLabel.removeSuffix("역") == queryWithoutStationSuffix -> 0
+        normalizedLabel.startsWith(normalizedQuery) -> 1
+        normalizedLabel.contains(normalizedQuery) -> 2
+        else -> 3
+    }
+}
+
+private fun String.normalizeStationSearchTerm(): String =
+    lowercase().filterNot(Char::isWhitespace).replace("·", "")
 
 class FakeTravelTimeProvider : TravelTimeProvider {
     override suspend fun getTravelTime(
