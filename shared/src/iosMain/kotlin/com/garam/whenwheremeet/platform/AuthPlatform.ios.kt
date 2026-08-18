@@ -38,6 +38,7 @@ import kotlin.random.Random
 @Composable
 actual fun rememberAuthPlatform(): AuthPlatform = remember {
     AuthPlatform(
+        showGoogleSignIn = true,
         showAppleSignIn = true,
         signInWithGoogle = {
             signInWithOAuthProvider("google.com")
