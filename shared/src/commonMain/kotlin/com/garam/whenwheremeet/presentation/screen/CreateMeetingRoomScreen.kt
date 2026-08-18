@@ -58,6 +58,7 @@ import com.garam.whenwheremeet.presentation.component.WwmInfoPanel
 import com.garam.whenwheremeet.presentation.component.WwmMuted
 import com.garam.whenwheremeet.presentation.component.WwmPrimaryButton
 import com.garam.whenwheremeet.presentation.component.WwmSoftIndigo
+import com.garam.whenwheremeet.presentation.component.WwmSurface
 import com.garam.whenwheremeet.presentation.component.WwmStepProgress
 import com.garam.whenwheremeet.presentation.component.WwmSurfaceSubtle
 import com.garam.whenwheremeet.presentation.component.WwmText
@@ -297,7 +298,7 @@ fun CreateMeetingRoomScreen(
                     }
                 }
             }
-            Box(Modifier.fillMaxWidth().background(Color.White)) {
+            Box(Modifier.fillMaxWidth().background(WwmSurface)) {
                 Row(
                     Modifier.fillMaxWidth().widthIn(max = if (isDesktop) 560.dp else screenWidth)
                         .align(Alignment.Center).padding(horizontal = 20.dp, vertical = 12.dp),
