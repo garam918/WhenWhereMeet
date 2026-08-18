@@ -52,9 +52,8 @@ class WebFirebaseAuth(
     }
 
     suspend fun currentIdToken(): String? {
-        val storedToken = storage.getString(WebAuthIdTokenKey) ?: return null
         val session = currentSession()?.takeUnless { it.isAnonymous } ?: return null
-        if (!isWebAuthBridgeReady()) return storedToken
+        if (!isWebAuthBridgeReady()) return storage.getString(WebAuthIdTokenKey)
 
         awaitWebAuthAction(WebAuthRefreshActionId)
         return storage.getString(WebAuthIdTokenKey)
