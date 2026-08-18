@@ -1,4 +1,10 @@
 (function () {
+    var assetVersion = "20260817-app-icon-1";
+
+    function versioned(src) {
+        return src + "?v=" + assetVersion;
+    }
+
     function loadScript(src) {
         return new Promise(function (resolve, reject) {
             var script = document.createElement("script");
@@ -18,8 +24,8 @@
     }
 
     function startApp() {
-        loadScript("/whenwheremeet-wasm.js").catch(function () {
-            return loadScript("/whenwheremeet-js.js");
+        loadScript(versioned("/whenwheremeet-wasm.js")).catch(function () {
+            return loadScript(versioned("/whenwheremeet-js.js"));
         });
     }
 
@@ -39,7 +45,7 @@
             // Local development intentionally falls back to the local repository.
         })
         .then(function () {
-            return loadScript("/wwm-auth.js");
+            return loadScript(versioned("/wwm-auth.js"));
         })
         .then(function () {
             return window.wwmAuthReady;
