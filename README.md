@@ -75,12 +75,13 @@ Authentication setup:
 
 - Android Google sign-in uses Firebase Auth with Google Sign-In and `androidApp/google-services.json`.
 - iOS Google and Apple sign-in use Firebase Auth OAuth providers from the shared iOS implementation.
-- Web Google and Apple sign-in use Firebase Auth in the browser. Desktop browsers open a popup, while mobile browsers use a redirect flow.
+- Web Google and Apple sign-in use Firebase Auth's redirect flow on every browser. The auth bridge uses the deployed page's origin as `authDomain` so mobile Safari and browsers that restrict third-party storage can complete the redirect flow.
 - The deployed web app reads its public Firebase config from Firebase Hosting's `/__/firebase/init.json`; do not hardcode a Web API key in `index.html`.
 - Enable `Google` and `Apple` providers in Firebase Console > Authentication > Sign-in method. Keep the `Anonymous` provider disabled; the app requires a signed-in account before any meeting data can be used.
 - Add every deployed web hostname (including `whenwheremeet.web.app` and any custom domain) to Firebase Authentication > Settings > Authorized domains.
 - Add `https://whenwheremeet.web.app/__/auth/handler` to the authorized redirect URIs of the Google OAuth web client. Add an equivalent URI before serving the app from another domain.
 - For Apple web sign-in, create an Apple Services ID, associate the website domain, and register `https://whenwheremeet.web.app/__/auth/handler` as a Return URL. Then enter the Services ID, Apple Team ID, Key ID, and private key in the Firebase Apple provider settings. Add equivalent Return URLs before serving the app from another domain.
+- Do not enter the Firebase auth handler as Apple's Server-to-Server Notification Endpoint. That optional endpoint is only for account-change notifications and must be implemented as a separate backend route if the app needs it.
 - For iOS, link Firebase iOS SDKs required by GitLive Firebase Auth in Xcode and add the Sign in with Apple capability to the app target.
 - If switching iOS Google sign-in to the native GoogleSignIn SDK later, make sure `GoogleService-Info.plist` includes `REVERSED_CLIENT_ID` and add that value as a URL scheme in `Info.plist`.
 
