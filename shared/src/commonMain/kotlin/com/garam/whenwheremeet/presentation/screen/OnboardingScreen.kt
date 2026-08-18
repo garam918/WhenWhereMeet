@@ -1,6 +1,7 @@
 package com.garam.whenwheremeet.presentation.screen
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -25,6 +26,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -34,13 +36,18 @@ import com.garam.whenwheremeet.presentation.component.WwmBorder
 import com.garam.whenwheremeet.presentation.component.WwmIndigo
 import com.garam.whenwheremeet.presentation.component.WwmMuted
 import com.garam.whenwheremeet.presentation.component.WwmSoftIndigo
+import com.garam.whenwheremeet.presentation.component.WwmSurface
 import com.garam.whenwheremeet.presentation.component.WwmText
+import org.jetbrains.compose.resources.painterResource
+import whenwheremeet.shared.generated.resources.Res
+import whenwheremeet.shared.generated.resources.app_icon
 
 private const val TermsUrl = "https://whenwheremeet-legal.web.app/terms/"
 private const val PrivacyUrl = "https://whenwheremeet-legal.web.app/privacy/"
 
 @Composable
 fun OnboardingScreen(
+    showGoogleSignIn: Boolean,
     showAppleSignIn: Boolean,
     onGoogleSignIn: () -> Unit,
     onAppleSignIn: () -> Unit,
@@ -54,9 +61,12 @@ fun OnboardingScreen(
     ) {
         Text("언제어디", color = WwmIndigo, fontSize = 19.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(44.dp))
-        Box(Modifier.size(68.dp).background(WwmSoftIndigo, RoundedCornerShape(20.dp)), contentAlignment = Alignment.Center) {
-            Text("⌁", color = WwmIndigo, fontSize = 32.sp, fontWeight = FontWeight.Bold)
-        }
+        Image(
+            painter = painterResource(Res.drawable.app_icon),
+            contentDescription = "언제어디 앱 아이콘",
+            modifier = Modifier.size(68.dp),
+            contentScale = ContentScale.Fit,
+        )
         Spacer(Modifier.height(24.dp))
         Text(
             "날짜부터 장소까지,\n한 번에 정해요",
@@ -83,9 +93,13 @@ fun OnboardingScreen(
         Spacer(Modifier.height(36.dp))
         if (showAppleSignIn) {
             LoginButton(text = "Apple로 계속하기", icon = "●", dark = true, onClick = onAppleSignIn)
+        }
+        if (showAppleSignIn && showGoogleSignIn) {
             Spacer(Modifier.height(10.dp))
         }
-        LoginButton(text = "Google로 계속하기", icon = "G", onClick = onGoogleSignIn)
+        if (showGoogleSignIn) {
+            LoginButton(text = "Google로 계속하기", icon = "G", onClick = onGoogleSignIn)
+        }
         Spacer(Modifier.height(14.dp))
         Text(
             "약속을 안전하게 보관하고 모든 기기에서 불러오려면 로그인이 필요해요.",
@@ -125,9 +139,9 @@ private fun LoginButton(text: String, icon: String, dark: Boolean = false, onCli
         onClick = onClick,
         modifier = Modifier.fillMaxWidth().height(52.dp),
         shape = RoundedCornerShape(14.dp),
-        border = BorderStroke(1.dp, if (dark) Color.Black else WwmBorder),
+        border = BorderStroke(1.dp, WwmBorder),
         colors = ButtonDefaults.outlinedButtonColors(
-            containerColor = if (dark) Color.Black else Color.White,
+            containerColor = if (dark) Color.Black else WwmSurface,
             contentColor = if (dark) Color.White else WwmText,
         ),
     ) {
