@@ -54,6 +54,7 @@ import com.garam.whenwheremeet.presentation.component.WwmOrange
 import com.garam.whenwheremeet.presentation.component.WwmPrimaryButton
 import com.garam.whenwheremeet.presentation.component.WwmSectionHeader
 import com.garam.whenwheremeet.presentation.component.WwmSoftIndigo
+import com.garam.whenwheremeet.presentation.component.WwmSurface
 import com.garam.whenwheremeet.presentation.component.WwmText
 import com.garam.whenwheremeet.presentation.state.CalendarDayUiModel
 import com.garam.whenwheremeet.presentation.state.CalendarMeetingItemUiModel
@@ -181,7 +182,7 @@ private fun DesktopCalendarContent(
                 CalendarMonthGrid(state.currentMonth, state.dayItems, onSelectDate)
             }
             Column(
-                Modifier.width(360.dp).fillMaxSize().background(Color.White, RoundedCornerShape(16.dp))
+                Modifier.width(360.dp).fillMaxSize().background(WwmSurface, RoundedCornerShape(16.dp))
                     .border(1.dp, WwmBorder, RoundedCornerShape(16.dp)).verticalScroll(rememberScrollState()).padding(18.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
@@ -225,7 +226,7 @@ private fun CalendarMonthHeader(
 @Composable
 private fun HeaderButton(text: String, onClick: () -> Unit) {
     Box(
-        Modifier.background(Color.White, RoundedCornerShape(999.dp)).border(1.dp, WwmBorder, RoundedCornerShape(999.dp))
+        Modifier.background(WwmSurface, RoundedCornerShape(999.dp)).border(1.dp, WwmBorder, RoundedCornerShape(999.dp))
             .clickable(onClick = onClick).padding(horizontal = 12.dp, vertical = 7.dp),
         contentAlignment = Alignment.Center,
     ) {
@@ -254,7 +255,7 @@ private fun CalendarFilterChips(selected: CalendarFilter, onFilterChange: (Calen
             val isSelected = filter == selected
             Box(
                 Modifier.weight(1f)
-                    .background(if (isSelected) WwmIndigo else Color.White, RoundedCornerShape(999.dp))
+                    .background(if (isSelected) WwmIndigo else WwmSurface, RoundedCornerShape(999.dp))
                     .border(1.dp, if (isSelected) WwmIndigo else WwmBorder, RoundedCornerShape(999.dp))
                     .clickable { onFilterChange(filter) }
                     .padding(vertical = 9.dp),
@@ -393,6 +394,7 @@ private fun CalendarFilter.label(): String = when (this) {
     CalendarFilter.MY_ACTION_REQUIRED -> "내가 할 일"
 }
 
+@Composable
 private fun CalendarDayIndicator.color(): Color = when (this) {
     CalendarDayIndicator.CONFIRMED -> WwmMint
     CalendarDayIndicator.COLLECTING_AVAILABILITY -> WwmOrange
