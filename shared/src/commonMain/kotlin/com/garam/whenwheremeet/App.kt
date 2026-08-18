@@ -26,6 +26,7 @@ import com.garam.whenwheremeet.platform.rememberShareService
 import com.garam.whenwheremeet.platform.rememberAuthPlatform
 import com.garam.whenwheremeet.platform.rememberExternalUrlLauncher
 import com.garam.whenwheremeet.platform.rememberMapLauncher
+import com.garam.whenwheremeet.platform.rememberMeetingNotificationPlatform
 import com.garam.whenwheremeet.platform.PlatformBackHandler
 import com.garam.whenwheremeet.platform.PlatformDeepLinkEffect
 import com.garam.whenwheremeet.presentation.screen.CreateMeetingRoomScreen
@@ -36,7 +37,9 @@ import com.garam.whenwheremeet.presentation.screen.MeetingRoomScreen
 import com.garam.whenwheremeet.presentation.screen.MyPageScreen
 import com.garam.whenwheremeet.presentation.screen.OnboardingScreen
 import com.garam.whenwheremeet.presentation.component.CalendarAddBottomSheet
+import com.garam.whenwheremeet.presentation.component.NotificationPermissionDialog
 import com.garam.whenwheremeet.presentation.component.WwmTheme
+import com.garam.whenwheremeet.presentation.component.WwmThemeMode
 import com.garam.whenwheremeet.presentation.state.AppRoute
 import com.garam.whenwheremeet.presentation.state.MeetingAppState
 import com.garam.whenwheremeet.presentation.state.UiAction
@@ -50,6 +53,9 @@ private const val TemporaryFeedbackUrl = "https://example.com"
 private const val TermsUrl = "https://whenwheremeet-legal.web.app/terms/"
 private const val PrivacyUrl = "https://whenwheremeet-legal.web.app/privacy/"
 private const val CachedAccountIdKey = "meeting_cache_account_uid"
+private const val ThemeModeKey = "ui_theme_mode"
+private const val NotificationPermissionPromptedKey = "notification_permission_prompted_v1"
+private const val NotificationPermissionEnabledKey = "notification_permission_enabled_v1"
 
 @Suppress("DEPRECATION")
 @Composable
@@ -66,6 +72,17 @@ private fun AppContent() {
     var authSession by remember {
         mutableStateOf(restoredAuthSession?.takeUnless(AuthSession::isAnonymous))
     }
+    var themeMode by remember {
+        mutableStateOf(
+            storage.getString(ThemeModeKey)
+                ?.let { stored -> runCatching { WwmThemeMode.valueOf(stored) }.getOrNull() }
+                ?: WwmThemeMode.LIGHT,
+        )
+    }
+    var isNotificationPermissionGranted by remember {
+        mutableStateOf(storage.getString(NotificationPermissionEnabledKey) == true.toString())
+    }
+    var showNotificationPermissionDialog by remember { mutableStateOf(false) }
     var appDataGeneration by remember { mutableStateOf(0) }
     val koin = getKoin()
     val appState = remember(appDataGeneration) {
@@ -77,6 +94,7 @@ private fun AppContent() {
     val shareService = rememberShareService()
     val mapLauncher = rememberMapLauncher()
     val authPlatform = rememberAuthPlatform()
+    val notificationPlatform = rememberMeetingNotificationPlatform()
     val externalUrlLauncher = rememberExternalUrlLauncher()
     val event = appState.event
     val focusManager = LocalFocusManager.current
@@ -114,6 +132,26 @@ private fun AppContent() {
         appState.restoreAccountMeetings()
     }
 
+    LaunchedEffect(isAuthenticated, authSession?.uid, notificationPlatform.isSupported) {
+        showNotificationPermissionDialog = isAuthenticated &&
+            notificationPlatform.isSupported &&
+            storage.getString(NotificationPermissionPromptedKey) != true.toString()
+    }
+
+    LaunchedEffect(
+        isAuthenticated,
+        authSession?.uid,
+        isNotificationPermissionGranted,
+        notificationPlatform,
+    ) {
+        val userId = authSession?.uid ?: return@LaunchedEffect
+        if (!isAuthenticated || !isNotificationPermissionGranted || !notificationPlatform.isSupported) {
+            return@LaunchedEffect
+        }
+        notificationPlatform.registerDevice(userId)
+            .onFailure { snackbarHostState.showSnackbar("알림 기기를 등록하지 못했어요. 잠시 후 다시 시도해주세요.") }
+    }
+
     LaunchedEffect(isAuthenticated, pendingInviteRoomCode, appState) {
         val roomCode = pendingInviteRoomCode ?: return@LaunchedEffect
         if (!isAuthenticated) return@LaunchedEffect
@@ -137,7 +175,7 @@ private fun AppContent() {
         appState.dispatch(UiAction.NavigateBack)
     }
 
-    WwmTheme {
+    WwmTheme(darkTheme = themeMode == WwmThemeMode.DARK) {
         Scaffold(
             modifier = Modifier.pointerInput(Unit) {
                 detectTapGestures(onTap = { focusManager.clearFocus() })
@@ -147,6 +185,7 @@ private fun AppContent() {
         ) { padding ->
             if (!isAuthenticated) {
                 OnboardingScreen(
+                    showGoogleSignIn = authPlatform.showGoogleSignIn,
                     showAppleSignIn = authPlatform.showAppleSignIn,
                     onGoogleSignIn = {
                         coroutineScope.launch {
@@ -200,11 +239,19 @@ private fun AppContent() {
                 )
                 AppRoute.MyPage -> MyPageScreen(
                     authSession = authSession,
+                    selectedTheme = themeMode,
+                    onSelectTheme = { selected ->
+                        themeMode = selected
+                        storage.putString(ThemeModeKey, selected.name)
+                    },
                     onOpenFeedback = { externalUrlLauncher.openUrl(TemporaryFeedbackUrl) },
                     onOpenTerms = { externalUrlLauncher.openUrl(TermsUrl) },
                     onOpenPrivacy = { externalUrlLauncher.openUrl(PrivacyUrl) },
                     onSignOut = {
                         coroutineScope.launch {
+                            authSession?.uid?.let { userId ->
+                                runCatching { notificationPlatform.unregisterDevice(userId) }
+                            }
                             runCatching { authPlatform.signOut() }
                                 .onSuccess {
                                     resetLocalAppDataAndShowLogin()
@@ -215,6 +262,9 @@ private fun AppContent() {
                     },
                     onDeleteAccount = {
                         coroutineScope.launch {
+                            authSession?.uid?.let { userId ->
+                                runCatching { notificationPlatform.unregisterDevice(userId) }
+                            }
                             runCatching { authPlatform.deleteAccount() }
                                 .onSuccess {
                                     resetLocalAppDataAndShowLogin()
@@ -306,6 +356,30 @@ private fun AppContent() {
                     }
                 },
                 onDismiss = { pendingCalendarEvent = null },
+            )
+        }
+        if (showNotificationPermissionDialog) {
+            NotificationPermissionDialog(
+                onAllow = {
+                    showNotificationPermissionDialog = false
+                    storage.putString(NotificationPermissionPromptedKey, true.toString())
+                    notificationPlatform.requestPermission { granted ->
+                        isNotificationPermissionGranted = granted
+                        storage.putString(NotificationPermissionEnabledKey, granted.toString())
+                        coroutineScope.launch {
+                            snackbarHostState.showSnackbar(
+                                if (granted) "약속 알림을 켰어요."
+                                else "알림 권한이 허용되지 않았어요. 기기 설정에서 변경할 수 있어요.",
+                            )
+                        }
+                    }
+                },
+                onLater = {
+                    showNotificationPermissionDialog = false
+                    isNotificationPermissionGranted = false
+                    storage.putString(NotificationPermissionPromptedKey, true.toString())
+                    storage.putString(NotificationPermissionEnabledKey, false.toString())
+                },
             )
         }
     }
