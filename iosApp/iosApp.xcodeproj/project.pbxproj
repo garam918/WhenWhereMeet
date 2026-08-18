@@ -11,6 +11,7 @@
 		2B1C3D4E5F60718293A4B5C6 /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = 6B7C8D9E0F10213243546576 /* FirebaseAuth */; };
 		3C2D4E5F60718293A4B5C6D7 /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = 7C8D9E0F1021324354657687 /* FirebaseFirestore */; };
 		4D3E5F60718293A4B5C6D7E8 /* FirebaseCrashlytics in Frameworks */ = {isa = PBXBuildFile; productRef = 8D9E0F102132435465768798 /* FirebaseCrashlytics */; };
+		5E4F60718293A4B5C6D7E8F9 /* FirebaseMessaging in Frameworks */ = {isa = PBXBuildFile; productRef = 9E0F102132435465768798A9 /* FirebaseMessaging */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -52,6 +53,7 @@
 				2B1C3D4E5F60718293A4B5C6 /* FirebaseAuth in Frameworks */,
 				3C2D4E5F60718293A4B5C6D7 /* FirebaseFirestore in Frameworks */,
 				4D3E5F60718293A4B5C6D7E8 /* FirebaseCrashlytics in Frameworks */,
+				5E4F60718293A4B5C6D7E8F9 /* FirebaseMessaging in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -100,6 +102,7 @@
 				6B7C8D9E0F10213243546576 /* FirebaseAuth */,
 				7C8D9E0F1021324354657687 /* FirebaseFirestore */,
 				8D9E0F102132435465768798 /* FirebaseCrashlytics */,
+				9E0F102132435465768798A9 /* FirebaseMessaging */,
 			);
 			productName = iosApp;
 			productReference = 6B2E839CB4CC299019141F9E /* WhenWhereMeet.app */;
@@ -119,6 +122,12 @@
 						CreatedOnToolsVersion = 16.2;
 						SystemCapabilities = {
 							com.apple.SignInWithApple = {
+								enabled = 1;
+							};
+							com.apple.BackgroundModes = {
+								enabled = 1;
+							};
+							com.apple.Push = {
 								enabled = 1;
 							};
 						};
@@ -316,6 +325,7 @@
 		70EDE35CB7297F3EDF1C824D /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				APS_ENVIRONMENT = development;
 				ARCHS = arm64;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -350,6 +360,7 @@
 		E9D9FF084DD1405CBE9BCF3A /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				APS_ENVIRONMENT = production;
 				ARCHS = arm64;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -435,6 +446,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 4D5E6F708192A3B4C5D6E7F8 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
 			productName = FirebaseCrashlytics;
+		};
+		9E0F102132435465768798A9 /* FirebaseMessaging */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 4D5E6F708192A3B4C5D6E7F8 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseMessaging;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
