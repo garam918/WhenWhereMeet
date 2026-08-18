@@ -219,7 +219,7 @@ private fun OriginStationCard(
                 }
                 WwmBadge(
                     text = if (state.currentStartLocation == null) "1단계" else "입력 완료",
-                    containerColor = if (state.currentStartLocation == null) WwmSoftIndigo else Color(0xFFE9F8F2),
+                    containerColor = if (state.currentStartLocation == null) WwmSoftIndigo else WwmMintSurface,
                     contentColor = if (state.currentStartLocation == null) WwmIndigo else WwmMintText,
                 )
             }
@@ -256,7 +256,7 @@ private fun OriginStationCard(
                         Text(participant.nickname, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
                         WwmBadge(
                             text = locationByParticipant[participant.id]?.label ?: "미입력",
-                            containerColor = if (locationByParticipant[participant.id] == null) WwmSurfaceSubtle else Color(0xFFE9F8F2),
+                            containerColor = if (locationByParticipant[participant.id] == null) WwmSurfaceSubtle else WwmMintSurface,
                             contentColor = if (locationByParticipant[participant.id] == null) WwmMuted else WwmMintText,
                         )
                     }
@@ -373,7 +373,7 @@ private fun DestinationStationCard(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(if (selected) WwmSoftIndigo.copy(alpha = 0.55f) else Color.White, RoundedCornerShape(16.dp))
+            .background(if (selected) WwmSoftIndigo.copy(alpha = 0.55f) else WwmSurface, RoundedCornerShape(16.dp))
             .border(if (selected || leading) 1.5.dp else 1.dp, borderColor, RoundedCornerShape(16.dp))
             .clickable(onClick = onVote)
             .padding(16.dp),
@@ -476,7 +476,7 @@ private fun FinalStationCard(
     WwmCard {
         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Box(Modifier.size(40.dp).background(Color(0xFFE9F8F2), CircleShape), contentAlignment = Alignment.Center) {
+                Box(Modifier.size(40.dp).background(WwmMintSurface, CircleShape), contentAlignment = Alignment.Center) {
                     Text("✓", color = WwmMintText, fontWeight = FontWeight.Bold)
                 }
                 Column {
@@ -510,7 +510,7 @@ private fun FinalMeetingWithoutPlaceCard(
     WwmCard {
         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Box(Modifier.size(40.dp).background(Color(0xFFE9F8F2), CircleShape), contentAlignment = Alignment.Center) {
+                Box(Modifier.size(40.dp).background(WwmMintSurface, CircleShape), contentAlignment = Alignment.Center) {
                     Text("✓", color = WwmMintText, fontWeight = FontWeight.Bold)
                 }
                 Column {
