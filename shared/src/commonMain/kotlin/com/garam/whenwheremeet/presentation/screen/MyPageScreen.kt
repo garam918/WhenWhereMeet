@@ -34,7 +34,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -52,12 +51,16 @@ import com.garam.whenwheremeet.presentation.component.WwmError
 import com.garam.whenwheremeet.presentation.component.WwmIndigo
 import com.garam.whenwheremeet.presentation.component.WwmMuted
 import com.garam.whenwheremeet.presentation.component.WwmSoftIndigo
+import com.garam.whenwheremeet.presentation.component.WwmSurface
 import com.garam.whenwheremeet.presentation.component.WwmText
+import com.garam.whenwheremeet.presentation.component.WwmThemeMode
 import com.garam.whenwheremeet.presentation.component.WwmTopBar
 
 @Composable
 fun MyPageScreen(
     authSession: AuthSession?,
+    selectedTheme: WwmThemeMode,
+    onSelectTheme: (WwmThemeMode) -> Unit,
     onOpenFeedback: () -> Unit,
     onOpenTerms: () -> Unit,
     onOpenPrivacy: () -> Unit,
@@ -68,7 +71,6 @@ fun MyPageScreen(
     onCreateRoom: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var selectedTheme by remember { mutableStateOf(ScreenMode.Light) }
     var destination by remember { mutableStateOf(SettingsDestination.Main) }
 
     PlatformBackHandler(enabled = destination != SettingsDestination.Main) {
@@ -128,7 +130,7 @@ fun MyPageScreen(
             SettingsDestination.ScreenMode -> {
                 ScreenModeSettingsContent(
                     selectedMode = selectedTheme,
-                    onSelectMode = { selectedTheme = it },
+                    onSelectMode = onSelectTheme,
                     onBack = { destination = SettingsDestination.Main },
                 )
             }
@@ -139,7 +141,7 @@ fun MyPageScreen(
 @Composable
 private fun DesktopSettingsMainContent(
     authSession: AuthSession?,
-    selectedMode: ScreenMode,
+    selectedMode: WwmThemeMode,
     onOpenAccount: () -> Unit,
     onOpenFeedback: () -> Unit,
     onOpenScreenMode: () -> Unit,
@@ -205,8 +207,6 @@ private fun DesktopSettingsMainContent(
             }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(28.dp)) {
                 DesktopSettingsGroup("앱 설정") {
-                    SettingsMenuItem("알림 설정", "이벤트 초대 및 업데이트 알림", onClick = {})
-                    SettingsDivider()
                     SettingsMenuItem("화면 모드", selectedMode.label, onClick = onOpenScreenMode)
                 }
                 DesktopSettingsGroup("고객 지원") {
@@ -236,15 +236,10 @@ private enum class SettingsDestination {
     ScreenMode,
 }
 
-private enum class ScreenMode(val label: String) {
-    Light("라이트 모드"),
-    Dark("다크 모드"),
-}
-
 @Composable
 private fun SettingsMainContent(
     authSession: AuthSession?,
-    selectedMode: ScreenMode,
+    selectedMode: WwmThemeMode,
     onOpenAccount: () -> Unit,
     onOpenFeedback: () -> Unit,
     onOpenScreenMode: () -> Unit,
@@ -262,7 +257,7 @@ private fun SettingsMainContent(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(Color.White, RoundedCornerShape(18.dp))
+                        .background(WwmSurface, RoundedCornerShape(18.dp))
                         .padding(18.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(14.dp),
@@ -306,7 +301,7 @@ private fun SettingsMainContent(
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("설정", color = WwmText, fontSize = 17.sp, fontWeight = FontWeight.Bold)
                     Column(
-                        modifier = Modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(18.dp)),
+                        modifier = Modifier.fillMaxWidth().background(WwmSurface, RoundedCornerShape(18.dp)),
                     ) {
                         SettingsMenuItem(
                             title = "로그인 정보",
@@ -332,7 +327,7 @@ private fun SettingsMainContent(
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("서비스 정보", color = WwmText, fontSize = 17.sp, fontWeight = FontWeight.Bold)
                     Column(
-                        modifier = Modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(18.dp)),
+                        modifier = Modifier.fillMaxWidth().background(WwmSurface, RoundedCornerShape(18.dp)),
                     ) {
                         SettingsMenuItem(
                             title = "이용 약관",
@@ -410,8 +405,8 @@ private fun AccountSettingsContent(
 
 @Composable
 private fun ScreenModeSettingsContent(
-    selectedMode: ScreenMode,
-    onSelectMode: (ScreenMode) -> Unit,
+    selectedMode: WwmThemeMode,
+    onSelectMode: (WwmThemeMode) -> Unit,
     onBack: () -> Unit,
 ) {
     Column(Modifier.fillMaxSize()) {
@@ -424,9 +419,9 @@ private fun ScreenModeSettingsContent(
             WwmCard(Modifier.fillMaxWidth()) {
                 Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 16.dp)) {
                     Text("모드 선택", color = WwmText, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-                    Text("현재 UI는 라이트 모드로 표시돼요", color = WwmMuted, fontSize = 13.sp)
+                    Text("현재 UI는 ${selectedMode.label}로 표시돼요", color = WwmMuted, fontSize = 13.sp)
                     Spacer(Modifier.height(10.dp))
-                    ScreenMode.entries.forEach { mode ->
+                    WwmThemeMode.entries.forEach { mode ->
                         Row(
                             Modifier.fillMaxWidth()
                                 .selectable(
@@ -494,7 +489,7 @@ private fun SettingsActionButton(
         shape = RoundedCornerShape(8.dp),
         border = BorderStroke(1.dp, if (danger) WwmError else WwmBorder),
         colors = ButtonDefaults.outlinedButtonColors(
-            containerColor = Color.White,
+            containerColor = WwmSurface,
             contentColor = if (danger) WwmError else WwmText,
         ),
     ) {
