@@ -26,8 +26,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.Typography
+import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -49,41 +51,94 @@ import whenwheremeet.shared.generated.resources.pretendard_medium
 import whenwheremeet.shared.generated.resources.pretendard_regular
 import whenwheremeet.shared.generated.resources.pretendard_semi_bold
 
-val WwmIndigo = Color(0xFF5146E5)
-val WwmIndigoBright = Color(0xFF3F35D3)
-val WwmBackground = Color(0xFFF7F8FC)
-val WwmNavBackground = Color.White
-val WwmSoftIndigo = Color(0xFFEFEEFF)
-val WwmBorder = Color(0xFFE6E7EE)
-val WwmText = Color(0xFF171A24)
-val WwmMuted = Color(0xFF676B7A)
+private val LightIndigo = Color(0xFF5146E5)
+private val LightIndigoBright = Color(0xFF3F35D3)
+private val LightBackground = Color(0xFFF7F8FC)
+private val LightSoftIndigo = Color(0xFFEFEEFF)
+private val LightBorder = Color(0xFFE6E7EE)
+private val LightText = Color(0xFF171A24)
+private val LightMuted = Color(0xFF676B7A)
+private val LightMintText = Color(0xFF11815B)
+private val LightSurfaceSubtle = Color(0xFFF0F1F6)
+
 val WwmMint = Color(0xFF21B981)
-val WwmMintText = Color(0xFF11815B)
 val WwmOrange = Color(0xFFF59E0B)
 val WwmError = Color(0xFFEF5B5B)
-val WwmSurfaceSubtle = Color(0xFFF0F1F6)
 
-private val WwmColors: ColorScheme = lightColorScheme(
-    primary = WwmIndigo,
+val WwmIndigo: Color
+    @Composable @ReadOnlyComposable get() = MaterialTheme.colorScheme.primary
+val WwmIndigoBright: Color
+    @Composable @ReadOnlyComposable get() = MaterialTheme.colorScheme.onPrimaryContainer
+val WwmBackground: Color
+    @Composable @ReadOnlyComposable get() = MaterialTheme.colorScheme.background
+val WwmNavBackground: Color
+    @Composable @ReadOnlyComposable get() = MaterialTheme.colorScheme.surface
+val WwmSurface: Color
+    @Composable @ReadOnlyComposable get() = MaterialTheme.colorScheme.surface
+val WwmSoftIndigo: Color
+    @Composable @ReadOnlyComposable get() = MaterialTheme.colorScheme.primaryContainer
+val WwmBorder: Color
+    @Composable @ReadOnlyComposable get() = MaterialTheme.colorScheme.outline
+val WwmText: Color
+    @Composable @ReadOnlyComposable get() = MaterialTheme.colorScheme.onSurface
+val WwmMuted: Color
+    @Composable @ReadOnlyComposable get() = MaterialTheme.colorScheme.onSurfaceVariant
+val WwmMintText: Color
+    @Composable @ReadOnlyComposable get() = MaterialTheme.colorScheme.onSecondaryContainer
+val WwmMintSurface: Color
+    @Composable @ReadOnlyComposable get() = MaterialTheme.colorScheme.secondaryContainer
+val WwmSurfaceSubtle: Color
+    @Composable @ReadOnlyComposable get() = MaterialTheme.colorScheme.surfaceVariant
+
+enum class WwmThemeMode(val label: String) {
+    LIGHT("라이트 모드"),
+    DARK("다크 모드"),
+}
+
+private val WwmLightColors: ColorScheme = lightColorScheme(
+    primary = LightIndigo,
     onPrimary = Color.White,
-    primaryContainer = WwmSoftIndigo,
-    onPrimaryContainer = WwmIndigoBright,
+    primaryContainer = LightSoftIndigo,
+    onPrimaryContainer = LightIndigoBright,
     secondary = WwmMint,
     onSecondary = Color.White,
     secondaryContainer = WwmMint.copy(alpha = 0.14f),
-    onSecondaryContainer = WwmMintText,
+    onSecondaryContainer = LightMintText,
     tertiaryContainer = WwmOrange,
     onTertiaryContainer = Color.White,
-    background = WwmBackground,
-    onBackground = WwmText,
+    background = LightBackground,
+    onBackground = LightText,
     surface = Color.White,
-    onSurface = WwmText,
-    surfaceVariant = WwmSurfaceSubtle,
-    onSurfaceVariant = WwmMuted,
+    onSurface = LightText,
+    surfaceVariant = LightSurfaceSubtle,
+    onSurfaceVariant = LightMuted,
     error = WwmError,
     onError = Color.White,
-    outline = WwmBorder,
-    outlineVariant = WwmBorder,
+    outline = LightBorder,
+    outlineVariant = LightBorder,
+)
+
+private val WwmDarkColors: ColorScheme = darkColorScheme(
+    primary = Color(0xFF8F88FF),
+    onPrimary = Color.White,
+    primaryContainer = Color(0xFF292655),
+    onPrimaryContainer = Color(0xFFD4D1FF),
+    secondary = Color(0xFF52D5A5),
+    onSecondary = Color(0xFF06261D),
+    secondaryContainer = Color(0xFF173B31),
+    onSecondaryContainer = Color(0xFF78E5BC),
+    tertiaryContainer = Color(0xFF6A4810),
+    onTertiaryContainer = Color(0xFFFFD99A),
+    background = Color(0xFF11131A),
+    onBackground = Color(0xFFF3F4F8),
+    surface = Color(0xFF191C26),
+    onSurface = Color(0xFFF3F4F8),
+    surfaceVariant = Color(0xFF232735),
+    onSurfaceVariant = Color(0xFFB6BBC9),
+    error = Color(0xFFFF8989),
+    onError = Color(0xFF3B0808),
+    outline = Color(0xFF3B4050),
+    outlineVariant = Color(0xFF303544),
 )
 
 @Composable
@@ -113,8 +168,15 @@ private fun WwmTypography(): Typography {
 }
 
 @Composable
-fun WwmTheme(content: @Composable () -> Unit) {
-    MaterialTheme(colorScheme = WwmColors, typography = WwmTypography(), content = content)
+fun WwmTheme(
+    darkTheme: Boolean = false,
+    content: @Composable () -> Unit,
+) {
+    MaterialTheme(
+        colorScheme = if (darkTheme) WwmDarkColors else WwmLightColors,
+        typography = WwmTypography(),
+        content = content,
+    )
 }
 
 @Composable
@@ -128,7 +190,7 @@ fun WwmTopBar(
     onTrailingClick: (() -> Unit)? = null,
 ) {
     Row(
-        Modifier.fillMaxWidth().height(60.dp).background(Color.White).padding(horizontal = 16.dp),
+        Modifier.fillMaxWidth().height(60.dp).background(WwmSurface).padding(horizontal = 16.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -168,24 +230,25 @@ fun WwmTopBar(
 
 @Composable
 fun RefreshActionIcon(modifier: Modifier = Modifier) {
+    val indigo = WwmIndigo
     Canvas(modifier.size(20.dp)) {
         val strokeWidth = 2.2.dp.toPx()
         drawArc(
-            color = WwmIndigo,
+            color = indigo,
             startAngle = 35f,
             sweepAngle = 285f,
             useCenter = false,
             style = Stroke(width = strokeWidth, cap = StrokeCap.Round),
         )
         drawLine(
-            color = WwmIndigo,
+            color = indigo,
             start = androidx.compose.ui.geometry.Offset(size.width * 0.83f, size.height * 0.18f),
             end = androidx.compose.ui.geometry.Offset(size.width * 0.83f, size.height * 0.42f),
             strokeWidth = strokeWidth,
             cap = StrokeCap.Round,
         )
         drawLine(
-            color = WwmIndigo,
+            color = indigo,
             start = androidx.compose.ui.geometry.Offset(size.width * 0.83f, size.height * 0.18f),
             end = androidx.compose.ui.geometry.Offset(size.width * 0.62f, size.height * 0.2f),
             strokeWidth = strokeWidth,
@@ -205,7 +268,7 @@ fun WwmCard(
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
         shape = RoundedCornerShape(16.dp),
         border = BorderStroke(1.dp, WwmBorder),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
+        colors = CardDefaults.cardColors(containerColor = WwmSurface),
     ) { content() }
 }
 
@@ -257,7 +320,7 @@ fun WwmEmptyState(
     icon: String = "○",
 ) {
     Column(
-        modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(16.dp)).border(1.dp, WwmBorder, RoundedCornerShape(16.dp)).padding(28.dp),
+        modifier.fillMaxWidth().background(WwmSurface, RoundedCornerShape(16.dp)).border(1.dp, WwmBorder, RoundedCornerShape(16.dp)).padding(28.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
