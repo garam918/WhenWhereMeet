@@ -56,19 +56,37 @@
         return provider ? provider.providerId : "firebase";
     }
 
-    async function storeUserSession(user) {
-        var idToken = await user.getIdToken();
+    function storeUserIdentity(user) {
         window.localStorage.setItem(storageKeys.uid, user.uid);
-        window.localStorage.setItem(storageKeys.idToken, idToken);
         window.localStorage.setItem(storageKeys.provider, userProviderId(user));
         window.localStorage.setItem(storageKeys.isAnonymous, String(user.isAnonymous));
         setOptionalStorageValue(storageKeys.displayName, user.displayName);
         setOptionalStorageValue(storageKeys.email, user.email);
+    }
+
+    async function storeUserSession(user) {
+        // Authentication has already succeeded when Firebase exposes a user.
+        // Persist that identity before requesting a token so a transient token
+        // refresh failure cannot leave the app stuck on the onboarding screen.
+        storeUserIdentity(user);
+        try {
+            var idToken = await user.getIdToken();
+            window.localStorage.setItem(storageKeys.idToken, idToken);
+        } catch (error) {
+            window.localStorage.removeItem(storageKeys.idToken);
+            storeActionError(error);
+        }
         markActionCompleted();
     }
 
+    function safeFirebaseErrorCode(error) {
+        var code = error && typeof error.code === "string" ? error.code : "";
+        return /^auth\/[a-z0-9-]+$/.test(code) ? code : "";
+    }
+
     function firebaseErrorMessage(error) {
-        switch (error && error.code) {
+        var code = safeFirebaseErrorCode(error);
+        switch (code) {
             case "auth/popup-closed-by-user":
             case "auth/cancelled-popup-request":
                 return "로그인 창이 닫혔어요. 다시 시도해주세요.";
@@ -84,8 +102,19 @@
                 return "같은 이메일로 가입된 다른 로그인 방식이 있어요. 기존 방식으로 로그인해주세요.";
             case "auth/requires-recent-login":
                 return "보안을 위해 다시 로그인한 뒤 시도해주세요.";
+            case "auth/web-storage-unsupported":
+                return "이 브라우저에서는 로그인 저장소를 사용할 수 없어요. 쿠키와 사이트 데이터 사용을 허용해주세요.";
+            case "auth/operation-not-supported-in-this-environment":
+                return "현재 브라우저 환경에서는 로그인을 진행할 수 없어요. Safari 또는 Chrome에서 다시 시도해주세요.";
+            case "auth/app-not-authorized":
+            case "auth/invalid-api-key":
+                return "Firebase 웹 앱 인증 설정을 확인해주세요. (" + code + ")";
+            case "auth/internal-error":
+                return "로그인 공급자 설정을 확인해주세요. (" + code + ")";
             default:
-                return "로그인을 처리하지 못했어요. 잠시 후 다시 시도해주세요.";
+                return code
+                    ? "로그인을 처리하지 못했어요. 다시 시도해주세요. (" + code + ")"
+                    : "로그인을 처리하지 못했어요. 다시 시도해주세요.";
         }
     }
 
@@ -97,13 +126,6 @@
     function storeActionError(error) {
         window.localStorage.setItem(storageKeys.errorMessage, firebaseErrorMessage(error));
         window.localStorage.setItem(storageKeys.errorId, nextId());
-    }
-
-    function isMobileBrowser() {
-        if (navigator.userAgentData && typeof navigator.userAgentData.mobile === "boolean") {
-            return navigator.userAgentData.mobile;
-        }
-        return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
     }
 
     function bindAction(id, action) {
@@ -181,23 +203,23 @@
             signInInProgress = true;
             try {
                 var provider = providerFor(providerId);
-                if (isMobileBrowser()) {
-                    if (auth.currentUser && auth.currentUser.isAnonymous) {
-                        await firebaseAuth.linkWithRedirect(auth.currentUser, provider);
-                    } else {
-                        await firebaseAuth.signInWithRedirect(auth, provider);
-                    }
-                    return;
-                }
                 var result;
                 try {
+                    // Keep the current app page alive whenever the browser
+                    // supports popups. This lets Kotlin receive the completed
+                    // session immediately without restoring redirect state
+                    // after a full-page restart on mobile browsers.
                     if (auth.currentUser && auth.currentUser.isAnonymous) {
                         result = await firebaseAuth.linkWithPopup(auth.currentUser, provider);
                     } else {
                         result = await firebaseAuth.signInWithPopup(auth, provider);
                     }
                 } catch (error) {
-                    if (error && error.code === "auth/popup-blocked") {
+                    var shouldUseRedirect = error && (
+                        error.code === "auth/popup-blocked"
+                        || error.code === "auth/operation-not-supported-in-this-environment"
+                    );
+                    if (shouldUseRedirect) {
                         if (auth.currentUser && auth.currentUser.isAnonymous) {
                             await firebaseAuth.linkWithRedirect(auth.currentUser, provider);
                         } else {
@@ -232,6 +254,7 @@
             if (auth.currentUser) {
                 await storeUserSession(auth.currentUser);
             } else {
+                clearStoredSession();
                 markActionCompleted();
             }
         });
@@ -251,7 +274,8 @@
         setBridgeReady(true);
     }
 
-    window.wwmAuthReady = initializeWebAuth().catch(function () {
+    window.wwmAuthReady = initializeWebAuth().catch(function (error) {
+        storeActionError(error);
         setBridgeReady(false);
     });
 })();
