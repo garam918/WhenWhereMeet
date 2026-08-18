@@ -9,6 +9,7 @@ import com.garam.whenwheremeet.data.repository.webFirebaseConfig
 actual fun rememberAuthPlatform(): AuthPlatform = remember {
     val auth = WebFirebaseAuth(webFirebaseConfig())
     AuthPlatform(
+        showGoogleSignIn = true,
         showAppleSignIn = true,
         signInWithGoogle = {
             auth.signInWithGoogle()
