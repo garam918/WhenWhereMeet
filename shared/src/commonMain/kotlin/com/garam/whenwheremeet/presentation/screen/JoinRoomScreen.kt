@@ -46,6 +46,7 @@ import com.garam.whenwheremeet.presentation.component.WwmInfoPanel
 import com.garam.whenwheremeet.presentation.component.WwmMuted
 import com.garam.whenwheremeet.presentation.component.WwmPrimaryButton
 import com.garam.whenwheremeet.presentation.component.WwmSoftIndigo
+import com.garam.whenwheremeet.presentation.component.WwmSurface
 import com.garam.whenwheremeet.presentation.component.WwmText
 import com.garam.whenwheremeet.presentation.component.WwmTopBar
 import com.garam.whenwheremeet.domain.usecase.ExtractRoomCodeUseCase
@@ -149,7 +150,7 @@ private fun RoomCodeField(value: String, onValueChange: (String) -> Unit) {
                         val active = index == value.length.coerceAtMost(5)
                         Box(
                             Modifier.size(width = 48.dp, height = 54.dp)
-                                .background(Color.White, RoundedCornerShape(12.dp))
+                                .background(WwmSurface, RoundedCornerShape(12.dp))
                                 .border(1.5.dp, if (active) WwmIndigo else WwmBorder, RoundedCornerShape(12.dp)),
                             contentAlignment = Alignment.Center,
                         ) {
