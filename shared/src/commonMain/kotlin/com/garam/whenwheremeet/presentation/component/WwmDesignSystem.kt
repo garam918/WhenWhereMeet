@@ -184,6 +184,7 @@ fun WwmTopBar(
     title: String = "언제어디",
     leadingText: String? = null,
     onLeadingClick: (() -> Unit)? = null,
+    trailingContent: (@Composable () -> Unit)? = null,
     trailingText: String? = null,
     trailingIconContentDescription: String? = null,
     trailingIcon: (@Composable () -> Unit)? = null,
@@ -208,6 +209,8 @@ fun WwmTopBar(
         Text(title, color = WwmIndigo, fontSize = 18.sp, fontWeight = FontWeight.Bold)
         Box(Modifier.width(48.dp), contentAlignment = Alignment.CenterEnd) {
             when {
+                trailingContent != null -> trailingContent()
+
                 trailingIcon != null -> IconButton(
                     onClick = { onTrailingClick?.invoke() },
                     enabled = onTrailingClick != null,
