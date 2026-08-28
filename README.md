@@ -88,6 +88,9 @@ Authentication setup:
 Account meeting restore and invite links:
 
 - Each participant document stores the signed-in Firebase Auth UID. After login, Android, iOS, and web query the `participants` collection group and restore every meeting associated with that UID, including past and in-progress meetings.
+- Room authorization uses `meetingRooms/{roomId}/members/{authUid}`. Exact start locations remain owner-only, while room members read only `startLocationSummaries` with coarse coordinates.
+- Account deletion calls the authenticated `deleteAccountData` Function, which removes user-owned meeting data, private locations, votes, friend links, notification devices, hosted rooms, and the Firebase Auth user.
+- Existing projects must follow [functions/SECURITY_MIGRATION.md](functions/SECURITY_MIGRATION.md) before deploying the hardened rules.
 - Deploy both Firestore rules and indexes after changing them: `firebase deploy --only firestore:rules,firestore:indexes`.
 - Shared invitations use `https://whenwheremeet.web.app/join/{ROOM_CODE}`. Android App Links and iOS Universal Links open the installed app; Firebase Hosting serves the web app as the fallback.
 - Deploy Hosting after building the production web bundle so `/.well-known/assetlinks.json` and `/.well-known/apple-app-site-association` are reachable.
