@@ -13,6 +13,7 @@ import com.garam.whenwheremeet.domain.model.DestinationStationOption
 import com.garam.whenwheremeet.domain.model.DestinationStationProposal
 import com.garam.whenwheremeet.domain.model.DestinationStationVote
 import com.garam.whenwheremeet.domain.model.FriendProfile
+import com.garam.whenwheremeet.domain.model.GeoPoint
 import com.garam.whenwheremeet.domain.model.LocationPrivacyLevel
 import com.garam.whenwheremeet.domain.model.LocationSearchResult
 import com.garam.whenwheremeet.domain.model.MAX_MEETING_PARTICIPANTS
@@ -45,6 +46,8 @@ import com.garam.whenwheremeet.domain.usecase.BuildDestinationStationOptionsUseC
 import com.garam.whenwheremeet.domain.usecase.CycleAvailabilityStatusUseCase
 import com.garam.whenwheremeet.domain.usecase.CalendarFilter
 import com.garam.whenwheremeet.domain.usecase.CalendarMonth
+import com.garam.whenwheremeet.domain.usecase.ConfirmationParticipation
+import com.garam.whenwheremeet.domain.usecase.EvaluateConfirmationParticipationUseCase
 import com.garam.whenwheremeet.domain.usecase.MeetingOverview
 import com.garam.whenwheremeet.domain.usecase.RecommendDatesUseCase
 import com.garam.whenwheremeet.domain.usecase.RecommendMeetingAreasUseCase
@@ -98,9 +101,11 @@ data class MeetingRoomUiState(
     val participants: List<Participant>,
     val currentParticipant: Participant,
     val selectedAvailability: Map<LocalDate, AvailabilityStatus>,
+    val isAvailabilityEditing: Boolean,
     val summaries: List<DateAvailabilitySummary>,
     val recommendations: List<RecommendedDate>,
     val selectedSummary: DateAvailabilitySummary?,
+    val dateConfirmationParticipation: ConfirmationParticipation?,
     val startLocations: List<UserStartLocation>,
     val currentStartLocation: UserStartLocation?,
     val currentTransportMode: TransportMode,
@@ -114,6 +119,8 @@ data class MeetingRoomUiState(
     val destinationStationProposals: List<DestinationStationProposal>,
     val destinationStationVotes: List<DestinationStationVote>,
     val destinationStationOptions: List<DestinationStationOption>,
+    val destinationConfirmationParticipation: ConfirmationParticipation,
+    val withoutPlaceConfirmationParticipation: ConfirmationParticipation,
 )
 
 data class CreateRoomInput(
@@ -146,6 +153,8 @@ class MeetingAppState(
     private val buildCalendarMonth: BuildCalendarMonthUseCase = BuildCalendarMonthUseCase(),
     private val buildCalendarEventDraft: BuildCalendarEventDraftUseCase = BuildCalendarEventDraftUseCase(),
     private val buildDestinationStationOptions: BuildDestinationStationOptionsUseCase = BuildDestinationStationOptionsUseCase(),
+    private val evaluateConfirmationParticipation: EvaluateConfirmationParticipationUseCase =
+        EvaluateConfirmationParticipationUseCase(),
     private val kakaoMapRouteUrlBuilder: KakaoMapRouteUrlBuilder = KakaoMapRouteUrlBuilder(),
 ) {
     var route: AppRoute by mutableStateOf(AppRoute.Home)
@@ -155,6 +164,7 @@ class MeetingAppState(
         private set
     private var revision by mutableStateOf(0)
     private var availabilityDraft by mutableStateOf<Map<LocalDate, AvailabilityStatus>>(emptyMap())
+    private var isAvailabilityEditing by mutableStateOf(false)
     private var selectedDate by mutableStateOf<LocalDate?>(null)
     private var calendarMonth by mutableStateOf(CalendarMonth.from(currentLocalDate()))
     private var calendarSelectedDate by mutableStateOf(currentLocalDate())
@@ -253,14 +263,21 @@ class MeetingAppState(
         val placeVotes = repository.getPlaceVotes(room.id)
         val destinationStationProposals = repository.getDestinationStationProposals(room.id)
         val destinationStationVotes = repository.getDestinationStationVotes(room.id)
+        val selectedSummary = summaries.firstOrNull { it.date == selectedDate }
+        val confirmedDateSummary = summaries.firstOrNull { it.date == room.confirmedDate }
+        val participantIds = participants.filterNot { it.isInvited }.map { it.id }
         return MeetingRoomUiState(
             room = room,
             participants = participants,
             currentParticipant = currentParticipant,
             selectedAvailability = availabilityDraft,
+            isAvailabilityEditing = isAvailabilityEditing,
             summaries = summaries,
             recommendations = recommendDates(room, participants, availabilities),
-            selectedSummary = summaries.firstOrNull { it.date == selectedDate },
+            selectedSummary = selectedSummary,
+            dateConfirmationParticipation = selectedSummary?.let { summary ->
+                evaluateConfirmationParticipation(participantIds, summary.respondedParticipantIds())
+            },
             startLocations = startLocations,
             currentStartLocation = startLocations.firstOrNull { it.participantId == currentId },
             currentTransportMode = preferences.firstOrNull { it.participantId == currentId }?.transportMode
@@ -277,6 +294,14 @@ class MeetingAppState(
             destinationStationOptions = buildDestinationStationOptions(
                 destinationStationProposals,
                 destinationStationVotes,
+            ),
+            destinationConfirmationParticipation = evaluateConfirmationParticipation(
+                participantIds,
+                destinationStationVotes.map { it.participantId },
+            ),
+            withoutPlaceConfirmationParticipation = evaluateConfirmationParticipation(
+                participantIds,
+                confirmedDateSummary?.respondedParticipantIds().orEmpty(),
             ),
         )
     }
@@ -506,14 +531,20 @@ class MeetingAppState(
     }
 
     fun cycleAvailability(date: LocalDate) {
+        if (!isAvailabilityEditing) return
         val next = cycleStatus(availabilityDraft[date])
         availabilityDraft = if (next == null) availabilityDraft - date else availabilityDraft + (date to next)
+    }
+
+    fun startEditingAvailability() {
+        isAvailabilityEditing = true
     }
 
     suspend fun saveAvailability(roomId: String) {
         val participantId = repository.getCurrentParticipantId(roomId) ?: return
         runCatching { repository.saveAvailabilities(roomId, participantId, availabilityDraft) }
             .onSuccess {
+                isAvailabilityEditing = false
                 revision++
                 emitMessage("가능한 날짜를 저장했습니다.")
             }
@@ -524,10 +555,15 @@ class MeetingAppState(
         selectedDate = date
     }
 
-    suspend fun confirmDate(roomId: String, date: LocalDate) {
+    suspend fun confirmDate(roomId: String, date: LocalDate, allowLowParticipation: Boolean = false) {
         val room = repository.getRoom(roomId) ?: return
         if (repository.getCurrentParticipantId(roomId) != room.hostParticipantId) {
             emitMessage("방장만 날짜를 확정할 수 있습니다.")
+            return
+        }
+        val participation = dateConfirmationParticipation(roomId, date)
+        if (!participation.meetsThreshold && !allowLowParticipation) {
+            emitMessage("${participation.requiredVoterCount}명 이상 응답해야 바로 확정할 수 있어요.")
             return
         }
         runCatching { repository.confirmDate(roomId, date) }
@@ -539,7 +575,7 @@ class MeetingAppState(
             .onFailure { emitMessage(it.meetingRepositoryErrorMessage("약속 날짜를 확정하지 못했습니다.")) }
     }
 
-    suspend fun confirmMeetingWithoutPlace(roomId: String) {
+    suspend fun confirmMeetingWithoutPlace(roomId: String, allowLowParticipation: Boolean = false) {
         val room = repository.getRoom(roomId) ?: return
         if (repository.getCurrentParticipantId(roomId) != room.hostParticipantId) {
             emitMessage("방장만 약속을 확정할 수 있습니다.")
@@ -547,6 +583,11 @@ class MeetingAppState(
         }
         if (room.confirmedDate == null) {
             emitMessage("날짜를 먼저 확정해주세요.")
+            return
+        }
+        val participation = dateConfirmationParticipation(roomId, room.confirmedDate)
+        if (!participation.meetsThreshold && !allowLowParticipation) {
+            emitMessage("${participation.requiredVoterCount}명 이상 응답해야 바로 확정할 수 있어요.")
             return
         }
         runCatching { repository.confirmMeetingWithoutPlace(roomId) }
@@ -579,14 +620,14 @@ class MeetingAppState(
         destinationStationSearchResults = locationSearchProvider.search(query)
     }
 
-    suspend fun useCurrentLocation(roomId: String) {
-        val result = locationSearchProvider.getCurrentLocation()
+    suspend fun useCurrentLocation(roomId: String, currentLocation: GeoPoint) {
+        val result = locationSearchProvider.findNearestStation(currentLocation)
         if (result == null) {
-            emitMessage("현재 위치를 가져오지 못했습니다.")
+            emitMessage("현재 위치에서 가까운 지하철역을 찾지 못했습니다.")
             return
         }
         saveStartLocation(roomId, result)
-        emitMessage("현재 위치 샘플을 저장했습니다.")
+        emitMessage("현재 위치에서 가장 가까운 ${result.label}을 입력했습니다.")
     }
 
     suspend fun saveStartLocation(roomId: String, result: LocationSearchResult) {
@@ -682,7 +723,11 @@ class MeetingAppState(
         }
     }
 
-    suspend fun confirmDestinationStation(roomId: String, stationId: String) {
+    suspend fun confirmDestinationStation(
+        roomId: String,
+        stationId: String,
+        allowLowParticipation: Boolean = false,
+    ) {
         val room = repository.getRoom(roomId) ?: return
         if (repository.getCurrentParticipantId(roomId) != room.hostParticipantId) {
             emitMessage("방장만 최종 역을 확정할 수 있습니다.")
@@ -695,6 +740,15 @@ class MeetingAppState(
         val station = options.firstOrNull { it.station.id == stationId }?.station
         if (station == null) {
             emitMessage("현재 후보 목록에 없는 역입니다.")
+            return
+        }
+        val participants = repository.getParticipants(roomId).filterNot { it.isInvited }
+        val participation = evaluateConfirmationParticipation(
+            participants.map { it.id },
+            repository.getDestinationStationVotes(roomId).map { it.participantId },
+        )
+        if (!participation.meetsThreshold && !allowLowParticipation) {
+            emitMessage("${participation.requiredVoterCount}명 이상 투표해야 바로 확정할 수 있어요.")
             return
         }
         runCatching { repository.confirmPlace(roomId, station.toConfirmedStationPlace(kakaoMapRouteUrlBuilder)) }
@@ -817,7 +871,11 @@ class MeetingAppState(
         revision++
     }
 
-    suspend fun confirmPlace(roomId: String, place: PlaceCandidate) {
+    suspend fun confirmPlace(
+        roomId: String,
+        place: PlaceCandidate,
+        allowLowParticipation: Boolean = false,
+    ) {
         val room = repository.getRoom(roomId) ?: return
         if (repository.getCurrentParticipantId(roomId) != room.hostParticipantId) {
             emitMessage("방장만 최종 장소를 확정할 수 있습니다.")
@@ -825,6 +883,15 @@ class MeetingAppState(
         }
         if (repository.getPlaceCandidates(roomId).none { it.place.id == place.id }) {
             emitMessage("현재 장소 후보에 포함되지 않은 장소입니다.")
+            return
+        }
+        val participants = repository.getParticipants(roomId).filterNot { it.isInvited }
+        val participation = evaluateConfirmationParticipation(
+            participants.map { it.id },
+            repository.getPlaceVotes(roomId).map { it.participantId },
+        )
+        if (!participation.meetsThreshold && !allowLowParticipation) {
+            emitMessage("${participation.requiredVoterCount}명 이상 투표해야 바로 확정할 수 있어요.")
             return
         }
         runCatching { repository.confirmPlace(roomId, place) }
@@ -895,10 +962,26 @@ class MeetingAppState(
         availabilityDraft = repository.getAvailabilities(roomId)
             .filter { it.participantId == participantId }
             .associate { it.date to it.status }
+        isAvailabilityEditing = availabilityDraft.isEmpty()
         selectedDate = null
         locationSearchResults = emptyList()
         destinationStationSearchResults = emptyList()
         navigateTo(AppRoute.MeetingRoom(roomId), replaceCurrent = replaceCurrent)
+    }
+
+    private fun dateConfirmationParticipation(roomId: String, date: LocalDate): ConfirmationParticipation {
+        val room = repository.getRoom(roomId)
+            ?: return evaluateConfirmationParticipation(emptyList(), emptyList())
+        val participants = repository.getParticipants(roomId).filterNot { it.isInvited }
+        val summary = aggregateAvailability(
+            room,
+            participants,
+            repository.getAvailabilities(roomId),
+        ).firstOrNull { it.date == date }
+        return evaluateConfirmationParticipation(
+            participants.map { it.id },
+            summary?.respondedParticipantIds().orEmpty(),
+        )
     }
 
     private fun navigateTo(nextRoute: AppRoute, replaceCurrent: Boolean = false) {
@@ -972,6 +1055,9 @@ private fun com.garam.whenwheremeet.domain.usecase.HomeMeetingCard.toUiModel(): 
         ctaText = ctaText,
         isConfirmed = isConfirmed,
     )
+
+private fun DateAvailabilitySummary.respondedParticipantIds(): List<String> =
+    (availableParticipants + maybeParticipants + unavailableParticipants).map { it.id }
 
 private fun Throwable.meetingRepositoryErrorMessage(fallback: String): String {
     val rawMessage = message.orEmpty()
