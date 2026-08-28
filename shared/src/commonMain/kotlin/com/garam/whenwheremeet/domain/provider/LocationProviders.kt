@@ -7,7 +7,7 @@ import com.garam.whenwheremeet.domain.model.TravelTimeResult
 
 interface LocationSearchProvider {
     suspend fun search(query: String): List<LocationSearchResult>
-    suspend fun getCurrentLocation(): LocationSearchResult?
+    suspend fun findNearestStation(currentLocation: GeoPoint): LocationSearchResult?
 }
 
 interface TravelTimeProvider {
