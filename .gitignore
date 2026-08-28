@@ -19,6 +19,9 @@ captures
 node_modules/
 functions/.env
 .firebase/
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
 
 # Firebase local configuration
 androidApp/google-services.json
