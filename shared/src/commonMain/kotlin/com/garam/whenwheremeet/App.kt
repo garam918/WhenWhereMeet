@@ -21,7 +21,9 @@ import com.garam.whenwheremeet.di.appModule
 import com.garam.whenwheremeet.domain.model.CalendarEventDraft
 import com.garam.whenwheremeet.platform.AuthSession
 import com.garam.whenwheremeet.platform.CalendarLaunchResult
+import com.garam.whenwheremeet.platform.CurrentLocationResult
 import com.garam.whenwheremeet.platform.rememberCalendarService
+import com.garam.whenwheremeet.platform.rememberCurrentLocationPlatform
 import com.garam.whenwheremeet.platform.rememberShareService
 import com.garam.whenwheremeet.platform.rememberAuthPlatform
 import com.garam.whenwheremeet.platform.rememberExternalUrlLauncher
@@ -49,7 +51,7 @@ import org.koin.compose.KoinApplication
 import org.koin.compose.getKoin
 import org.koin.compose.koinInject
 
-private const val TemporaryFeedbackUrl = "https://example.com"
+private const val TemporaryFeedbackUrl = "https://docs.google.com/forms/d/e/1FAIpQLScBogIIV5g7xe43V023qVQo9uMMliWlJBgetMqlw9THTMkHkQ/viewform"
 private const val TermsUrl = "https://whenwheremeet-legal.web.app/terms/"
 private const val PrivacyUrl = "https://whenwheremeet-legal.web.app/privacy/"
 private const val CachedAccountIdKey = "meeting_cache_account_uid"
@@ -91,6 +93,7 @@ private fun AppContent() {
     val coroutineScope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
     val calendarService = rememberCalendarService()
+    val currentLocationPlatform = rememberCurrentLocationPlatform()
     val shareService = rememberShareService()
     val mapLauncher = rememberMapLauncher()
     val authPlatform = rememberAuthPlatform()
@@ -262,9 +265,6 @@ private fun AppContent() {
                     },
                     onDeleteAccount = {
                         coroutineScope.launch {
-                            authSession?.uid?.let { userId ->
-                                runCatching { notificationPlatform.unregisterDevice(userId) }
-                            }
                             runCatching { authPlatform.deleteAccount() }
                                 .onSuccess {
                                     resetLocalAppDataAndShowLogin()
@@ -309,11 +309,33 @@ private fun AppContent() {
                             onBack = { appState.dispatch(UiAction.NavigateBack) },
                             onCycleDate = appState::cycleAvailability,
                             onSelectDate = appState::selectDate,
+                            onEditAvailability = appState::startEditingAvailability,
                             onSave = { coroutineScope.launch { appState.saveAvailability(route.roomId) } },
-                            onConfirm = { coroutineScope.launch { appState.confirmDate(route.roomId, it) } },
+                            onConfirm = { date, allowLowParticipation ->
+                                coroutineScope.launch {
+                                    appState.confirmDate(route.roomId, date, allowLowParticipation)
+                                }
+                            },
                             onShare = { appState.requestShare(route.roomId) },
                             onSearchLocations = { query -> coroutineScope.launch { appState.searchLocations(query) } },
-                            onUseCurrentLocation = { coroutineScope.launch { appState.useCurrentLocation(route.roomId) } },
+                            onUseCurrentLocation = {
+                                currentLocationPlatform.requestCurrentLocation { result ->
+                                    when (result) {
+                                        is CurrentLocationResult.Success -> coroutineScope.launch {
+                                            appState.useCurrentLocation(route.roomId, result.point)
+                                        }
+                                        CurrentLocationResult.PermissionDenied -> coroutineScope.launch {
+                                            snackbarHostState.showSnackbar("가까운 역을 찾으려면 위치 권한을 허용해주세요.")
+                                        }
+                                        CurrentLocationResult.Unavailable -> coroutineScope.launch {
+                                            snackbarHostState.showSnackbar("현재 위치를 확인하지 못했어요. 위치 서비스를 확인해주세요.")
+                                        }
+                                        CurrentLocationResult.Unsupported -> coroutineScope.launch {
+                                            snackbarHostState.showSnackbar("현재 위치 자동 입력은 모바일 앱에서 사용할 수 있어요.")
+                                        }
+                                    }
+                                }
+                            },
                             onSaveStartLocation = { coroutineScope.launch { appState.saveStartLocation(route.roomId, it) } },
                             onSearchDestinationStations = { query ->
                                 coroutineScope.launch { appState.searchDestinationStations(query) }
@@ -324,11 +346,19 @@ private fun AppContent() {
                             onVoteDestinationStation = {
                                 coroutineScope.launch { appState.voteDestinationStation(route.roomId, it) }
                             },
-                            onConfirmDestinationStation = {
-                                coroutineScope.launch { appState.confirmDestinationStation(route.roomId, it) }
+                            onConfirmDestinationStation = { stationId, allowLowParticipation ->
+                                coroutineScope.launch {
+                                    appState.confirmDestinationStation(
+                                        route.roomId,
+                                        stationId,
+                                        allowLowParticipation,
+                                    )
+                                }
                             },
-                            onConfirmWithoutPlace = {
-                                coroutineScope.launch { appState.confirmMeetingWithoutPlace(route.roomId) }
+                            onConfirmWithoutPlace = { allowLowParticipation ->
+                                coroutineScope.launch {
+                                    appState.confirmMeetingWithoutPlace(route.roomId, allowLowParticipation)
+                                }
                             },
                             onOpenDestinationRoute = { appState.openDestinationStationRoute(route.roomId, it) },
                             onOpenConfirmedRoute = { appState.openConfirmedDestinationRoute(route.roomId) },
