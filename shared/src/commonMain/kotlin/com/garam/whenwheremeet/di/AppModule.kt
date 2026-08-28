@@ -3,7 +3,7 @@ package com.garam.whenwheremeet.di
 import com.garam.whenwheremeet.createMeetingRepository
 import com.garam.whenwheremeet.data.local.KeyValueStorage
 import com.garam.whenwheremeet.data.local.platformKeyValueStorage
-import com.garam.whenwheremeet.data.provider.FakeLocationSearchProvider
+import com.garam.whenwheremeet.data.provider.NationalStationSearchProvider
 import com.garam.whenwheremeet.data.provider.FakePlaceSearchProvider
 import com.garam.whenwheremeet.data.provider.GeminiPlaceRecommendationProvider
 import com.garam.whenwheremeet.data.provider.MetropolitanMeetingAreaCandidateProvider
@@ -23,7 +23,7 @@ val appModule = module {
     single { LocalMeetingRepository(get()) }
     single<MeetingRepository> { createMeetingRepository(get()) }
 
-    single<LocationSearchProvider> { FakeLocationSearchProvider() }
+    single<LocationSearchProvider> { NationalStationSearchProvider() }
     single<TravelTimeProvider> { StaticMetropolitanTransitTimeProvider() }
     single { RecommendMeetingAreasUseCase(get()) }
     single<PlaceSearchProvider> { FakePlaceSearchProvider() }
