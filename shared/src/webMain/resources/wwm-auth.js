@@ -264,9 +264,9 @@
             markActionCompleted();
         });
         bindAction("wwm-auth-delete-account", async function () {
-            if (auth.currentUser) {
-                await firebaseAuth.deleteUser(auth.currentUser);
-            }
+            // The authenticated server endpoint has already removed Firebase Auth
+            // and all server-side user data. Clear the local Firebase session only.
+            await firebaseAuth.signOut(auth);
             clearStoredSession();
             markActionCompleted();
         });
