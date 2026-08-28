@@ -111,7 +111,7 @@ enum class WwmFlowSection(val label: String, val icon: String) {
 @Composable
 fun WwmDesktopFlowTopBar(
     onBack: () -> Unit,
-    onShare: () -> Unit,
+    trailingContent: @Composable () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier.fillMaxWidth().background(WwmSurface)) {
@@ -124,12 +124,7 @@ fun WwmDesktopFlowTopBar(
                 Text("‹", modifier = Modifier.clickable(onClick = onBack).padding(8.dp), color = WwmText, fontSize = 28.sp)
                 Text("언제어디", color = WwmIndigo, fontSize = 23.sp, fontWeight = FontWeight.ExtraBold)
             }
-            Box(
-                Modifier.border(1.dp, WwmIndigo, RoundedCornerShape(12.dp)).clickable(onClick = onShare)
-                    .padding(horizontal = 18.dp, vertical = 10.dp),
-            ) {
-                Text("일정 공유하기", color = WwmIndigo, style = MaterialTheme.typography.labelLarge)
-            }
+            trailingContent()
         }
         HorizontalDivider(color = WwmBorder)
     }
