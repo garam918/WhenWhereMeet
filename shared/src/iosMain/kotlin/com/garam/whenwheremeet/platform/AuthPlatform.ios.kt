@@ -2,6 +2,7 @@ package com.garam.whenwheremeet.platform
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import com.garam.whenwheremeet.data.provider.AccountDeletionService
 import cocoapods.FirebaseAuth.FIROAuthProvider
 import cocoapods.FirebaseAuth.FIRAuthCredential
 import dev.gitlive.firebase.Firebase
@@ -51,7 +52,11 @@ actual fun rememberAuthPlatform(): AuthPlatform = remember {
         },
         deleteAccount = {
             val user = requireNotNull(Firebase.auth.currentUser) { "탈퇴할 로그인 정보를 찾지 못했어요." }
-            user.delete()
+            val idToken = requireNotNull(user.getIdToken(forceRefresh = true)) {
+                "로그인 인증 정보를 확인할 수 없어요. 다시 로그인해주세요."
+            }
+            AccountDeletionService.deleteServerAccount(idToken)
+            Firebase.auth.signOut()
         },
     )
 }
