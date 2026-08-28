@@ -38,6 +38,7 @@ import com.garam.whenwheremeet.domain.model.DestinationStationOption
 import com.garam.whenwheremeet.domain.model.LocationSearchResult
 import com.garam.whenwheremeet.domain.model.MeetingStatus
 import com.garam.whenwheremeet.domain.model.PlaceCandidate
+import com.garam.whenwheremeet.domain.usecase.ConfirmationParticipation
 import com.garam.whenwheremeet.presentation.state.MeetingRoomUiState
 import com.garam.whenwheremeet.presentation.state.toKoreanDate
 
@@ -50,8 +51,8 @@ fun PlaceRecommendationTab(
     onSearchDestinationStations: (String) -> Unit,
     onProposeDestinationStation: (LocationSearchResult) -> Unit,
     onVoteDestinationStation: (String) -> Unit,
-    onConfirmDestinationStation: (String) -> Unit,
-    onConfirmWithoutPlace: () -> Unit,
+    onConfirmDestinationStation: (String, Boolean) -> Unit,
+    onConfirmWithoutPlace: (Boolean) -> Unit,
     onOpenDestinationRoute: (String) -> Unit,
     onOpenConfirmedRoute: () -> Unit,
     onAddToCalendar: () -> Unit,
@@ -142,7 +143,13 @@ fun PlaceRecommendationTab(
                     )
                     WwmOutlineButton(
                         text = "장소 없이 약속 확정",
-                        onClick = { showConfirmWithoutPlace = true },
+                        onClick = {
+                            if (state.withoutPlaceConfirmationParticipation.meetsThreshold) {
+                                onConfirmWithoutPlace(false)
+                            } else {
+                                showConfirmWithoutPlace = true
+                            }
+                        },
                     )
                 }
             }
@@ -178,13 +185,19 @@ fun PlaceRecommendationTab(
     if (showConfirmWithoutPlace) {
         AlertDialog(
             onDismissRequest = { showConfirmWithoutPlace = false },
-            title = { Text("장소 없이 확정할까요?") },
-            text = { Text("확정 후에도 날짜를 변경하면 다시 조율 상태로 돌아가요. 장소는 미정으로 공유됩니다.") },
+            title = { Text("응답이 아직 충분하지 않아요") },
+            text = {
+                val participation = state.withoutPlaceConfirmationParticipation
+                Text(
+                    "현재 ${participation.voterCount}/${participation.participantCount}명이 날짜에 응답했어요. " +
+                        "${participation.requiredVoterCount}명(70%) 미만이지만 장소 없이 약속을 확정할까요?",
+                )
+            },
             confirmButton = {
                 TextButton(
                     onClick = {
                         showConfirmWithoutPlace = false
-                        onConfirmWithoutPlace()
+                        onConfirmWithoutPlace(true)
                     },
                 ) { Text("약속 확정", color = WwmIndigo) }
             },
@@ -300,12 +313,13 @@ private fun StationVotingSection(
     selectedStationId: String?,
     onVote: (String) -> Unit,
     onOpenRoute: (String) -> Unit,
-    onConfirm: (String) -> Unit,
+    onConfirm: (String, Boolean) -> Unit,
 ) {
     val options = state.destinationStationOptions
     val totalVoters = state.destinationStationVotes.map { it.participantId }.distinct().size
     val topVoteCount = options.maxOfOrNull { it.voteCount } ?: 0
     val leadingCount = options.count { topVoteCount > 0 && it.voteCount == topVoteCount }
+    var pendingLowParticipationStationId by remember { mutableStateOf<String?>(null) }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(
             Modifier.fillMaxWidth(),
@@ -339,7 +353,15 @@ private fun StationVotingSection(
         if (state.currentParticipant.isHost) {
             WwmPrimaryButton(
                 text = "이 역으로 확정",
-                onClick = { selectedStationId?.let(onConfirm) },
+                onClick = {
+                    selectedStationId?.let { stationId ->
+                        if (state.destinationConfirmationParticipation.meetsThreshold) {
+                            onConfirm(stationId, false)
+                        } else {
+                            pendingLowParticipationStationId = stationId
+                        }
+                    }
+                },
                 enabled = selectedStationId != null,
             )
             if (selectedStationId == null) {
@@ -352,6 +374,36 @@ private fun StationVotingSection(
             }
         }
     }
+    pendingLowParticipationStationId?.let { stationId ->
+        LowStationVoteConfirmDialog(
+            participation = state.destinationConfirmationParticipation,
+            onDismiss = { pendingLowParticipationStationId = null },
+            onConfirm = {
+                pendingLowParticipationStationId = null
+                onConfirm(stationId, true)
+            },
+        )
+    }
+}
+
+@Composable
+private fun LowStationVoteConfirmDialog(
+    participation: ConfirmationParticipation,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("투표가 아직 충분하지 않아요") },
+        text = {
+            Text(
+                "현재 ${participation.voterCount}/${participation.participantCount}명이 투표했어요. " +
+                    "바로 확정하려면 ${participation.requiredVoterCount}명(70%) 이상이 필요합니다. 그래도 이 역으로 확정할까요?",
+            )
+        },
+        confirmButton = { TextButton(onClick = onConfirm) { Text("확정", color = WwmIndigo) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
+    )
 }
 
 @Composable
