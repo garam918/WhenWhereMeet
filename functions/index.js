@@ -1,10 +1,17 @@
 const {onRequest} = require("firebase-functions/v2/https");
-const {onDocumentWritten} = require("firebase-functions/v2/firestore");
+const {onDocumentDeleted, onDocumentWritten} = require("firebase-functions/v2/firestore");
 const {onSchedule} = require("firebase-functions/v2/scheduler");
 const logger = require("firebase-functions/logger");
 const {initializeApp} = require("firebase-admin/app");
+const {getAuth} = require("firebase-admin/auth");
 const {getFirestore, FieldValue} = require("firebase-admin/firestore");
 const {getMessaging} = require("firebase-admin/messaging");
+const {
+  assertRecentLogin,
+  bearerTokenFrom,
+  deleteUserData,
+} = require("./account-deletion");
+const {selectLatestNotificationDevice} = require("./notification-targets");
 
 initializeApp();
 
@@ -13,6 +20,72 @@ const REGION = "asia-northeast3";
 const FIRESTORE_DATABASE_ID = "default";
 const KOREA_TIME_ZONE = "Asia/Seoul";
 const CONFIRMED_STATUSES = new Set(["PLACE_CONFIRMED", "MEETING_CONFIRMED"]);
+
+exports.deleteAccountData = onRequest(
+  {
+    region: REGION,
+    timeoutSeconds: 540,
+    memory: "512MiB",
+    invoker: "public",
+  },
+  async (req, res) => {
+    setCorsHeaders(res);
+    if (req.method === "OPTIONS") {
+      res.status(204).send("");
+      return;
+    }
+    if (req.method !== "POST") {
+      res.status(405).json({error: "POST 요청만 지원합니다."});
+      return;
+    }
+
+    try {
+      const decodedToken = await getAuth().verifyIdToken(bearerTokenFrom(req), true);
+      assertRecentLogin(decodedToken);
+      const result = await deleteUserData({
+        firestore: getFirestore(FIRESTORE_DATABASE_ID),
+        auth: getAuth(),
+        uid: decodedToken.uid,
+      });
+      logger.info("Account data deletion completed", result);
+      res.status(200).json({deleted: true});
+    } catch (error) {
+      const isAuthenticationError = typeof (error && error.code) === "string" &&
+        error.code.startsWith("auth/");
+      const statusCode = error.statusCode || (isAuthenticationError ? 401 : 500);
+      logger.error("deleteAccountData failed", {
+        statusCode,
+        message: error && error.message,
+      });
+      res.status(statusCode).json({
+        error: error.publicMessage || (isAuthenticationError ?
+          "로그인 인증 정보가 만료됐어요. 다시 로그인해주세요." :
+          "회원 데이터를 삭제하지 못했습니다. 잠시 후 다시 시도해주세요."),
+      });
+    }
+  },
+);
+
+exports.cleanupDeletedMeetingRoom = onDocumentDeleted(
+  {
+    document: "meetingRooms/{roomId}",
+    database: FIRESTORE_DATABASE_ID,
+    region: REGION,
+  },
+  async (event) => {
+    const firestore = getFirestore(FIRESTORE_DATABASE_ID);
+    await firestore.recursiveDelete(event.data.ref);
+    const roomCodes = await firestore
+      .collection("roomCodes")
+      .where("roomId", "==", event.params.roomId)
+      .get();
+    for (let start = 0; start < roomCodes.docs.length; start += 450) {
+      const batch = firestore.batch();
+      roomCodes.docs.slice(start, start + 450).forEach((document) => batch.delete(document.ref));
+      await batch.commit();
+    }
+  },
+);
 
 exports.notifyMeetingConfirmed = onDocumentWritten(
   {
@@ -35,6 +108,7 @@ exports.notifyMeetingConfirmed = onDocumentWritten(
       title: "약속이 확정됐어요",
       body: `${after.title || "약속"} 일정이 ${dateLabel}로 확정됐어요.${placeText}`,
       type: "meeting_confirmed",
+      latestDeviceOnly: true,
     });
   },
 );
@@ -68,7 +142,7 @@ exports.notifyMeetingsOnTheDay = onSchedule(
   },
 );
 
-async function sendMeetingPush({roomId, title, body, type}) {
+async function sendMeetingPush({roomId, title, body, type, latestDeviceOnly = false}) {
   const firestore = getFirestore(FIRESTORE_DATABASE_ID);
   const participants = await firestore
     .collection("meetingRooms")
@@ -83,12 +157,18 @@ async function sendMeetingPush({roomId, title, body, type}) {
     .doc(userId)
     .collection("notificationDevices")
     .get()));
-  const targets = deviceSnapshots.flatMap((snapshot) => snapshot.docs
-    .map((document) => ({
+  const targets = deviceSnapshots.flatMap((snapshot) => {
+    const devices = snapshot.docs.map((document) => ({
+      id: document.id,
       ref: document.ref,
       token: document.data().token,
-    }))
-    .filter((device) => typeof device.token === "string" && device.token));
+      lastLoginAt: document.data().lastLoginAt,
+      updatedAt: document.data().updatedAt,
+    })).filter((device) => typeof device.token === "string" && device.token);
+    if (!latestDeviceOnly) return devices;
+    const latestDevice = selectLatestNotificationDevice(devices);
+    return latestDevice ? [latestDevice] : [];
+  });
   if (targets.length === 0) return;
 
   const deepLinkUri = `https://whenwheremeet.web.app/join/${roomId}`;
