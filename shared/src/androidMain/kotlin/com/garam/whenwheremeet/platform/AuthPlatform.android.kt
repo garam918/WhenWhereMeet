@@ -8,6 +8,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.platform.LocalContext
+import com.garam.whenwheremeet.data.provider.AccountDeletionService
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import com.google.android.gms.common.api.ApiException
@@ -69,8 +70,12 @@ actual fun rememberAuthPlatform(): AuthPlatform {
             },
             deleteAccount = {
                 val user = requireNotNull(Firebase.auth.currentUser) { "탈퇴할 로그인 정보를 찾지 못했어요." }
-                user.delete()
-                GoogleSignIn.getClient(context, GoogleSignInOptions.DEFAULT_SIGN_IN).signOut()
+                val idToken = requireNotNull(user.getIdToken(forceRefresh = true)) {
+                    "로그인 인증 정보를 확인할 수 없어요. 다시 로그인해주세요."
+                }
+                AccountDeletionService.deleteServerAccount(idToken)
+                Firebase.auth.signOut()
+                runCatching { GoogleSignIn.getClient(context, GoogleSignInOptions.DEFAULT_SIGN_IN).signOut() }
             },
         )
     }
