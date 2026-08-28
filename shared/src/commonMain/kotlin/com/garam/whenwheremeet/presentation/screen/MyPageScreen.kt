@@ -383,7 +383,9 @@ private fun AccountSettingsContent(
         AlertDialog(
             onDismissRequest = { showDeleteConfirm = false },
             title = { Text("회원 탈퇴") },
-            text = { Text("계정을 삭제할까요? 이 작업은 되돌릴 수 없어요.") },
+            text = {
+                Text("계정과 연결된 일정, 출발지, 투표, 친구 정보가 삭제돼요. 내가 방장인 약속방도 모든 참여자에게서 삭제되며 되돌릴 수 없어요.")
+            },
             confirmButton = {
                 TextButton(
                     onClick = {
