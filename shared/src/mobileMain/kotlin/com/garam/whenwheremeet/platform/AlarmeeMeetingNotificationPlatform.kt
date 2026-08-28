@@ -23,6 +23,7 @@ internal class AlarmeeMeetingNotificationPlatform(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var currentUserId: String? = null
     private var currentInstallationId: String? = null
+    private var currentLoginAt: String? = null
     private var isTokenCallbackRegistered = false
 
     override fun requestPermission(onResult: (Boolean) -> Unit) {
@@ -31,22 +32,27 @@ internal class AlarmeeMeetingNotificationPlatform(
 
     override suspend fun registerDevice(userId: String): Result<Unit> = runCatching {
         val installationId = alarmeeService.push.getInstallationId().getOrThrow()
+        val loginAt = Clock.System.now().toString()
         currentUserId = userId
         currentInstallationId = installationId
+        currentLoginAt = loginAt
 
         if (!isTokenCallbackRegistered) {
             alarmeeService.push.onNewToken { refreshedToken ->
                 val registeredUserId = currentUserId ?: return@onNewToken
                 val registeredInstallationId = currentInstallationId ?: return@onNewToken
+                val registeredLoginAt = currentLoginAt ?: return@onNewToken
                 scope.launch {
-                    runCatching { saveDevice(registeredUserId, registeredInstallationId, refreshedToken) }
+                    runCatching {
+                        saveDevice(registeredUserId, registeredInstallationId, refreshedToken, registeredLoginAt)
+                    }
                 }
             }
             isTokenCallbackRegistered = true
         }
 
         val token = alarmeeService.push.getToken().getOrThrow()
-        saveDevice(userId, installationId, token)
+        saveDevice(userId, installationId, token, loginAt)
     }
 
     override suspend fun unregisterDevice(userId: String) {
@@ -65,11 +71,17 @@ internal class AlarmeeMeetingNotificationPlatform(
             if (currentUserId == userId) {
                 currentUserId = null
                 currentInstallationId = null
+                currentLoginAt = null
             }
         }
     }
 
-    private suspend fun saveDevice(userId: String, installationId: String, token: String) {
+    private suspend fun saveDevice(
+        userId: String,
+        installationId: String,
+        token: String,
+        lastLoginAt: String,
+    ) {
         firestore.collection(USERS)
             .document(userId)
             .collection(NOTIFICATION_DEVICES)
@@ -78,6 +90,7 @@ internal class AlarmeeMeetingNotificationPlatform(
                 NotificationDeviceDto(
                     token = token,
                     platform = platformName,
+                    lastLoginAt = lastLoginAt,
                     updatedAt = Clock.System.now().toString(),
                 ),
             )
@@ -94,5 +107,6 @@ internal class AlarmeeMeetingNotificationPlatform(
 private data class NotificationDeviceDto(
     val token: String,
     val platform: String,
+    val lastLoginAt: String,
     val updatedAt: String,
 )
