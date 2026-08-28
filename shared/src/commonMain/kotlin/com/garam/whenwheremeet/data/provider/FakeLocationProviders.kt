@@ -6,6 +6,7 @@ import com.garam.whenwheremeet.domain.model.TransportMode
 import com.garam.whenwheremeet.domain.model.TravelTimeResult
 import com.garam.whenwheremeet.domain.provider.LocationSearchProvider
 import com.garam.whenwheremeet.domain.provider.TravelTimeProvider
+import com.garam.whenwheremeet.domain.usecase.FindNearestTransitStationUseCase
 import kotlin.math.PI
 import kotlin.math.atan2
 import kotlin.math.cos
@@ -52,7 +53,9 @@ object SampleLocationData {
     )
 }
 
-class FakeLocationSearchProvider : LocationSearchProvider {
+class NationalStationSearchProvider(
+    private val findNearestStation: FindNearestTransitStationUseCase = FindNearestTransitStationUseCase(),
+) : LocationSearchProvider {
     private val stationSearchEntries by lazy {
         SampleLocationData.searchLocations.map { location ->
             StationSearchEntry(location, location.stationSearchKeys())
@@ -75,11 +78,19 @@ class FakeLocationSearchProvider : LocationSearchProvider {
             .toList()
     }
 
-    override suspend fun getCurrentLocation(): LocationSearchResult =
-        SampleLocationData.searchLocations.first {
-            it.label == "서울역" && it.address.orEmpty().startsWith("서울")
+    override suspend fun findNearestStation(currentLocation: GeoPoint): LocationSearchResult? =
+        findNearestStation(currentLocation, NationalTransitStationData.stations)?.let { station ->
+            LocationSearchResult(
+                id = station.id,
+                label = station.name,
+                address = "${station.region} · ${station.lines.joinToString("/")}",
+                point = station.point,
+            )
         }
 }
+
+@Deprecated("Use NationalStationSearchProvider", ReplaceWith("NationalStationSearchProvider"))
+typealias FakeLocationSearchProvider = NationalStationSearchProvider
 
 private data class StationSearchEntry(
     val location: LocationSearchResult,
