@@ -1,6 +1,7 @@
 package com.garam.whenwheremeet.data.repository
 
 import com.garam.whenwheremeet.data.local.platformKeyValueStorage
+import com.garam.whenwheremeet.data.provider.AccountDeletionService
 import com.garam.whenwheremeet.platform.AuthSession
 import js.objects.unsafeJso
 import kotlinx.browser.document
@@ -71,6 +72,10 @@ class WebFirebaseAuth(
     }
 
     suspend fun deleteAccount() {
+        val idToken = requireNotNull(currentIdToken()) {
+            "로그인 인증 정보를 확인할 수 없어요. 다시 로그인해주세요."
+        }
+        AccountDeletionService.deleteServerAccount(idToken)
         if (isWebAuthBridgeReady()) {
             awaitWebAuthAction(WebAuthDeleteAccountActionId)
         }
