@@ -6,6 +6,7 @@ import com.garam.whenwheremeet.domain.model.AreaRecommendation
 import com.garam.whenwheremeet.domain.model.DestinationStationProposal
 import com.garam.whenwheremeet.domain.model.DestinationStationVote
 import com.garam.whenwheremeet.domain.model.FriendProfile
+import com.garam.whenwheremeet.domain.model.LocationPrivacyLevel
 import com.garam.whenwheremeet.domain.model.MeetingRoom
 import com.garam.whenwheremeet.domain.model.MeetingStatus
 import com.garam.whenwheremeet.domain.model.MeetingType
@@ -46,6 +47,7 @@ import web.http.fetch
 import web.http.GET
 import web.http.POST
 import web.http.text
+import kotlin.math.round
 import kotlin.time.Clock
 import kotlin.time.Instant
 
@@ -90,16 +92,19 @@ class WebFirestoreMeetingRepository(
         val roomId = codeDoc?.fields()?.stringField("roomId") ?: code
         val roomDoc = getDocument("meetingRooms/$roomId") ?: return null
         val room = roomDoc.fields().toMeetingRoom()
-        val participants = loadParticipants(room.id)
+        val currentParticipant = loadCurrentUserParticipant(room.id)
+        val participants = if (currentParticipant == null) emptyList() else loadParticipants(room.id)
         local.importRoom(
             room,
             participants,
-            local.getCurrentParticipantId(room.id) ?: participants.firstOrNull { it.accountId == currentAuthUid() }?.id,
+            local.getCurrentParticipantId(room.id) ?: currentParticipant?.id,
         )
-        local.importAvailabilities(room.id, loadAvailabilities(room.id))
-        local.importStartLocations(room.id, loadStartLocations(room.id))
-        local.importDestinationStationProposals(room.id, loadDestinationStationProposals(room.id))
-        local.importDestinationStationVotes(room.id, loadDestinationStationVotes(room.id))
+        if (currentParticipant != null) {
+            local.importAvailabilities(room.id, loadAvailabilities(room.id))
+            local.importStartLocations(room.id, loadVisibleStartLocations(room.id, currentParticipant.id))
+            local.importDestinationStationProposals(room.id, loadDestinationStationProposals(room.id))
+            local.importDestinationStationVotes(room.id, loadDestinationStationVotes(room.id))
+        }
         return room
     }
 
@@ -120,7 +125,9 @@ class WebFirestoreMeetingRepository(
                 ?: participants.firstOrNull { it.accountId == currentAuthUid() }?.id,
         )
         local.importAvailabilities(remoteRoom.id, loadAvailabilities(remoteRoom.id))
-        local.importStartLocations(remoteRoom.id, loadStartLocations(remoteRoom.id))
+        local.getCurrentParticipantId(remoteRoom.id)?.let { participantId ->
+            local.importStartLocations(remoteRoom.id, loadVisibleStartLocations(remoteRoom.id, participantId))
+        }
         local.importDestinationStationProposals(remoteRoom.id, loadDestinationStationProposals(remoteRoom.id))
         local.importDestinationStationVotes(remoteRoom.id, loadDestinationStationVotes(remoteRoom.id))
     }
@@ -160,12 +167,23 @@ class WebFirestoreMeetingRepository(
             updateWrite("meetingRooms/$code", roomToStore.toFirestoreFields(participantCount = allParticipants.size, hostAuthUid = authUid), exists = false),
             updateWrite("roomCodes/$code", roomCodeFields(code, code, room.createdAt), exists = false),
             updateWrite("meetingRooms/$code/participants/${host.id}", hostToStore.toFirestoreFields(authUid), exists = false),
+            updateWrite(
+                "meetingRooms/$code/members/$authUid",
+                roomMemberFields(authUid, host.id, role = "host", joined = true, updatedAt = host.joinedAt),
+                exists = false,
+            ),
             updateWrite("meetingRooms/$code/nicknameKeys/${host.nickname.nicknameKey()}", nicknameFields(host.id), exists = false),
         )
         invitedToStore.forEach { invited ->
+            val invitedAuthUid = requireNotNull(invited.accountId)
             writes += updateWrite(
                 "meetingRooms/$code/participants/${invited.id}",
-                invited.toFirestoreFields(requireNotNull(invited.accountId)),
+                invited.toFirestoreFields(invitedAuthUid),
+                exists = false,
+            )
+            writes += updateWrite(
+                "meetingRooms/$code/members/$invitedAuthUid",
+                roomMemberFields(invitedAuthUid, invited.id, role = "participant", joined = false, updatedAt = invited.joinedAt),
                 exists = false,
             )
             writes += updateWrite(
@@ -183,7 +201,7 @@ class WebFirestoreMeetingRepository(
             ?: throw IllegalArgumentException("방 코드를 확인해주세요.")
         val participantToStore = participant.copy(roomId = room.id)
         val authUid = currentAuthUid()
-        val existingParticipant = loadParticipants(room.id).firstOrNull { it.accountId == authUid }
+        val existingParticipant = loadCurrentUserParticipant(room.id)
         if (existingParticipant != null) {
             if (existingParticipant.isInvited) {
                 commit(
@@ -193,6 +211,17 @@ class WebFirestoreMeetingRepository(
                             isInvited = false,
                             joinedAt = participant.joinedAt,
                         ).toFirestoreFields(authUid),
+                        exists = true,
+                    ),
+                    updateWrite(
+                        "meetingRooms/${room.id}/members/$authUid",
+                        roomMemberFields(
+                            authUid,
+                            existingParticipant.id,
+                            role = "participant",
+                            joined = true,
+                            updatedAt = participant.joinedAt,
+                        ),
                         exists = true,
                     ),
                 )
@@ -215,6 +244,11 @@ class WebFirestoreMeetingRepository(
                 exists = true,
             ),
             updateWrite("meetingRooms/${room.id}/participants/${participant.id}", participantToStore.toFirestoreFields(authUid), exists = false),
+            updateWrite(
+                "meetingRooms/${room.id}/members/$authUid",
+                roomMemberFields(authUid, participant.id, role = "participant", joined = true, updatedAt = participant.joinedAt),
+                exists = false,
+            ),
             updateWrite("meetingRooms/${room.id}/nicknameKeys/${participant.nickname.nicknameKey()}", nicknameFields(participant.id), exists = false),
         )
         local.importRoom(
@@ -240,10 +274,13 @@ class WebFirestoreMeetingRepository(
             exists = true,
         )
         writes += deleteWrite("meetingRooms/${room.id}/participants/$participantId")
+        writes += deleteWrite("meetingRooms/${room.id}/members/${currentAuthUid()}")
         writes += deleteWrite("meetingRooms/${room.id}/nicknameKeys/${participant.nickname.nicknameKey()}")
         loadAvailabilities(room.id)
             .filter { it.participantId == participantId }
             .forEach { writes += deleteWrite("meetingRooms/${room.id}/availabilities/${participantId}-${it.date}") }
+        writes += deleteWrite("meetingRooms/${room.id}/startLocations/$participantId")
+        writes += deleteWrite("meetingRooms/${room.id}/startLocationSummaries/$participantId")
         writes += deleteWrite("meetingRooms/${room.id}/destinationStationProposals/$participantId")
         writes += deleteWrite("meetingRooms/${room.id}/destinationStationVotes/$participantId")
         commit(*writes.toTypedArray())
@@ -252,28 +289,11 @@ class WebFirestoreMeetingRepository(
 
     override suspend fun deleteRoom(roomId: String) {
         val room = getRoom(roomId) ?: throw IllegalArgumentException("방 정보를 찾을 수 없습니다.")
-        val participants = loadParticipants(room.id)
-        val availabilities = loadAvailabilities(room.id)
-        val writes = mutableListOf<JsonObject>()
-        participants.forEach {
-            writes += deleteWrite("meetingRooms/${room.id}/participants/${it.id}")
-            writes += deleteWrite("meetingRooms/${room.id}/nicknameKeys/${it.nickname.nicknameKey()}")
-        }
-        availabilities.forEach {
-            writes += deleteWrite("meetingRooms/${room.id}/availabilities/${it.participantId}-${it.date}")
-        }
-        loadStartLocations(room.id).forEach {
-            writes += deleteWrite("meetingRooms/${room.id}/startLocations/${it.participantId}")
-        }
-        loadDestinationStationProposals(room.id).forEach {
-            writes += deleteWrite("meetingRooms/${room.id}/destinationStationProposals/${it.participantId}")
-        }
-        loadDestinationStationVotes(room.id).forEach {
-            writes += deleteWrite("meetingRooms/${room.id}/destinationStationVotes/${it.participantId}")
-        }
-        writes += deleteWrite("roomCodes/${room.id.normalizedRoomCode()}")
-        writes += deleteWrite("meetingRooms/${room.id}")
-        commit(*writes.toTypedArray())
+        // Cloud Functions recursively removes private subcollections after the room document is deleted.
+        commit(
+            deleteWrite("roomCodes/${room.id.normalizedRoomCode()}"),
+            deleteWrite("meetingRooms/${room.id}"),
+        )
         local.deleteRoom(room.id)
     }
 
@@ -349,6 +369,11 @@ class WebFirestoreMeetingRepository(
             updateWrite(
                 "meetingRooms/${room.id}/startLocations/${location.participantId}",
                 location.toFirestoreFields(),
+                exists = null,
+            ),
+            updateWrite(
+                "meetingRooms/${room.id}/startLocationSummaries/${location.participantId}",
+                location.toFirestoreSummaryFields(),
                 exists = null,
             ),
         )
@@ -436,11 +461,24 @@ class WebFirestoreMeetingRepository(
     private suspend fun loadParticipants(roomId: String): List<Participant> =
         listDocuments("meetingRooms/$roomId/participants").map { it.fields().toParticipant() }
 
+    private suspend fun loadCurrentUserParticipant(roomId: String): Participant? =
+        queryCurrentUserParticipantDocuments()
+            .firstOrNull { it.fields().stringField("roomId") == roomId }
+            ?.fields()
+            ?.toParticipant()
+
     private suspend fun loadAvailabilities(roomId: String): List<Availability> =
         listDocuments("meetingRooms/$roomId/availabilities").map { it.fields().toAvailability() }
 
-    private suspend fun loadStartLocations(roomId: String): List<UserStartLocation> =
-        listDocuments("meetingRooms/$roomId/startLocations").map { it.fields().toStartLocation() }
+    private suspend fun loadVisibleStartLocations(roomId: String, currentParticipantId: String): List<UserStartLocation> {
+        val ownLocation = getDocument("meetingRooms/$roomId/startLocations/$currentParticipantId")
+            ?.fields()
+            ?.toStartLocation()
+        val summaries = listDocuments("meetingRooms/$roomId/startLocationSummaries")
+            .map { it.fields().toStartLocationSummary() }
+            .filterNot { it.participantId == ownLocation?.participantId }
+        return summaries + listOfNotNull(ownLocation)
+    }
 
     private suspend fun loadDestinationStationProposals(roomId: String): List<DestinationStationProposal> =
         listDocuments("meetingRooms/$roomId/destinationStationProposals").map { it.fields().toDestinationStationProposal() }
@@ -590,6 +628,20 @@ private fun Participant.toFirestoreFields(authUid: String): JsonObject = buildJs
     put("joinedAt", stringValue(joinedAt.toKoreaIsoString()))
 }
 
+private fun roomMemberFields(
+    authUid: String,
+    participantId: String,
+    role: String,
+    joined: Boolean,
+    updatedAt: Instant,
+): JsonObject = buildJsonObject {
+    put("authUid", stringValue(authUid))
+    put("participantId", stringValue(participantId))
+    put("role", stringValue(role))
+    put("joined", booleanValue(joined))
+    put("updatedAt", stringValue(updatedAt.toKoreaIsoString()))
+}
+
 private fun Availability.toFirestoreFields(): JsonObject = buildJsonObject {
     put("roomId", stringValue(roomId))
     put("participantId", stringValue(participantId))
@@ -626,6 +678,15 @@ private fun UserStartLocation.toFirestoreFields(): JsonObject = buildJsonObject 
     put("latitude", doubleValue(latitude))
     put("longitude", doubleValue(longitude))
     put("privacyLevel", stringValue(privacyLevel.name))
+    put("updatedAt", stringValue(updatedAt.toKoreaIsoString()))
+}
+
+private fun UserStartLocation.toFirestoreSummaryFields(): JsonObject = buildJsonObject {
+    put("participantId", stringValue(participantId))
+    put("roomId", stringValue(roomId))
+    put("label", stringValue(label))
+    put("approximateLatitude", doubleValue(latitude.roundToAreaPrecision()))
+    put("approximateLongitude", doubleValue(longitude.roundToAreaPrecision()))
     put("updatedAt", stringValue(updatedAt.toKoreaIsoString()))
 }
 
@@ -709,6 +770,17 @@ private fun JsonObject.toStartLocation(): UserStartLocation = UserStartLocation(
     latitude = doubleField("latitude"),
     longitude = doubleField("longitude"),
     privacyLevel = enumValueOf(optionalStringField("privacyLevel") ?: "AREA_ONLY_VISIBLE"),
+    updatedAt = stringField("updatedAt").parseFirestoreInstant(),
+)
+
+private fun JsonObject.toStartLocationSummary(): UserStartLocation = UserStartLocation(
+    participantId = stringField("participantId"),
+    roomId = stringField("roomId"),
+    label = stringField("label"),
+    address = null,
+    latitude = doubleField("approximateLatitude"),
+    longitude = doubleField("approximateLongitude"),
+    privacyLevel = LocationPrivacyLevel.AREA_ONLY_VISIBLE,
     updatedAt = stringField("updatedAt").parseFirestoreInstant(),
 )
 
@@ -797,6 +869,7 @@ private fun arrayValue(values: List<JsonElement>): JsonObject = buildJsonObject 
 
 private fun String.normalizedRoomCode(): String = trim().uppercase()
 private fun String.nicknameKey(): String = trim().lowercase()
+private fun Double.roundToAreaPrecision(): Double = round(this * 100.0) / 100.0
 
 private fun Instant.toKoreaIsoString(): String = toLocalDateTime(KoreaTimeZone).formatIsoWithOffset()
 
