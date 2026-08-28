@@ -1,12 +1,13 @@
 package com.garam.whenwheremeet.data.provider
 
 import kotlinx.coroutines.test.runTest
+import com.garam.whenwheremeet.domain.model.GeoPoint
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class NationalStationSearchProviderTest {
-    private val provider = FakeLocationSearchProvider()
+    private val provider = NationalStationSearchProvider()
 
     @Test
     fun stationSnapshotCoversEveryUrbanRailRegionWithUniqueIds() {
@@ -48,5 +49,13 @@ class NationalStationSearchProviderTest {
         assertTrue(results.any { it.label == "서울역" })
         assertTrue(results.any { it.label == "서면역" })
         assertTrue(results.any { it.label == "반월당역" })
+    }
+
+    @Test
+    fun currentCoordinatesResolveToNearestStation() = runTest {
+        val result = provider.findNearestStation(GeoPoint(37.4980, 127.0277))
+
+        assertEquals("강남역", result?.label)
+        assertTrue(result?.address.orEmpty().contains("2호선"))
     }
 }
