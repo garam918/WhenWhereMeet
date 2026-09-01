@@ -112,6 +112,27 @@ service cloud.firestore {
         && getAfter(participantPath(roomId, data.participantId)).data.authUid == userId;
     }
 
+    function validUserProfile(data) {
+      return data.keys().hasOnly([
+          'email',
+          'displayName',
+          'providerId',
+          'createdAt',
+          'lastLoginAt',
+          'updatedAt'
+        ])
+        && data.keys().hasAll(['createdAt', 'lastLoginAt', 'updatedAt'])
+        && (!data.keys().hasAny(['email']) || data.email == null || (data.email is string && data.email.size() <= 320))
+        && (!data.keys().hasAny(['displayName']) || data.displayName == null || (data.displayName is string && data.displayName.size() <= 100))
+        && (!data.keys().hasAny(['providerId']) || data.providerId == null || data.providerId in ['google.com', 'apple.com'])
+        && data.createdAt is string
+        && data.createdAt.size() > 0
+        && data.lastLoginAt is string
+        && data.lastLoginAt.size() > 0
+        && data.updatedAt is string
+        && data.updatedAt.size() > 0;
+    }
+
     // collectionGroup("participants") is used only to find the caller's own rooms.
     match /{path=**}/participants/{participantId} {
       allow list: if signedIn() && resource.data.authUid == request.auth.uid;
@@ -303,7 +324,22 @@ service cloud.firestore {
     }
 
     match /users/{userId} {
-      allow read, write: if signedIn() && request.auth.uid == userId;
+      allow read: if signedIn() && request.auth.uid == userId;
+      allow create: if signedIn()
+        && request.auth.uid == userId
+        && validUserProfile(request.resource.data);
+      allow update: if signedIn()
+        && request.auth.uid == userId
+        && validUserProfile(request.resource.data)
+        && (
+          !resource.data.keys().hasAny(['createdAt'])
+          || request.resource.data.createdAt == resource.data.createdAt
+          || (
+            resource.data.createdAt.matches('.*Z')
+            && request.resource.data.createdAt.matches('.*[+]09:00')
+          )
+        );
+      allow delete: if signedIn() && request.auth.uid == userId;
 
       match /friends/{friendId} {
         allow read: if signedIn() && request.auth.uid == userId;
