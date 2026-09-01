@@ -6,7 +6,7 @@ import FirebaseCrashlytics
 import FirebaseMessaging
 import Shared
 
-final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate, MessagingDelegate {
+final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
     private let alarmeeBridge = AlarmeePushBridge()
 
     func application(
@@ -14,7 +14,6 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
         UNUserNotificationCenter.current().delegate = self
-        Messaging.messaging().delegate = self
         return true
     }
 
@@ -25,9 +24,12 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         Messaging.messaging().apnsToken = deviceToken
     }
 
-    func messaging(_ messaging: Messaging, didReceiveRegistrationToken fcmToken: String?) {
-        guard let fcmToken else { return }
-        alarmeeBridge.onNewToken(token: fcmToken)
+    func application(
+        _ application: UIApplication,
+        didFailToRegisterForRemoteNotificationsWithError error: Error
+    ) {
+        let registrationError = error as NSError
+        print("APNs registration failed: \(registrationError.domain) (\(registrationError.code))")
     }
 
     func application(
