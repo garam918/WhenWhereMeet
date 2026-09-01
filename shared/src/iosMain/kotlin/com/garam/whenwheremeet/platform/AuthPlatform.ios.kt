@@ -7,7 +7,6 @@ import cocoapods.FirebaseAuth.FIROAuthProvider
 import cocoapods.FirebaseAuth.FIRAuthCredential
 import dev.gitlive.firebase.Firebase
 import dev.gitlive.firebase.auth.AuthCredential
-import dev.gitlive.firebase.auth.FirebaseUser
 import dev.gitlive.firebase.auth.OAuthProvider
 import dev.gitlive.firebase.auth.auth
 import dev.gitlive.firebase.auth.ios
@@ -64,7 +63,7 @@ actual fun rememberAuthPlatform(): AuthPlatform = remember {
 @OptIn(ExperimentalForeignApi::class)
 private suspend fun signInWithOAuthProvider(providerId: String): AuthSession {
     val credential = OAuthProvider(provider = providerId).requestCredential()
-    return signInOrLink(AuthCredential(credential))
+    return signInOrLink(AuthCredential(credential), providerId)
 }
 
 @OptIn(ExperimentalForeignApi::class)
@@ -76,10 +75,10 @@ private suspend fun signInWithAppleProvider(): AuthSession {
         IDToken = idToken,
         rawNonce = rawNonce,
     )
-    return signInOrLink(AuthCredential(credential))
+    return signInOrLink(AuthCredential(credential), providerId = "apple.com")
 }
 
-private suspend fun signInOrLink(credential: AuthCredential): AuthSession {
+private suspend fun signInOrLink(credential: AuthCredential, providerId: String): AuthSession {
     val anonymousUser = Firebase.auth.currentUser?.takeIf { it.isAnonymous }
     val user = if (anonymousUser == null) {
         Firebase.auth.signInWithCredential(credential).user
@@ -87,7 +86,7 @@ private suspend fun signInOrLink(credential: AuthCredential): AuthSession {
         runCatching { anonymousUser.linkWithCredential(credential).user }
             .getOrElse { Firebase.auth.signInWithCredential(credential).user }
     }
-    return user.requireSession()
+    return user.requireAuthSession(providerId)
 }
 
 @OptIn(ExperimentalForeignApi::class)
@@ -269,15 +268,4 @@ private fun sha256(message: ByteArray): ByteArray {
             output[outputIndex + 3] = value.toByte()
         }
     }
-}
-
-private fun FirebaseUser?.requireSession(): AuthSession {
-    val user = requireNotNull(this) { "Firebase 로그인 사용자 정보를 가져오지 못했습니다." }
-    return AuthSession(
-        uid = user.uid,
-        displayName = user.displayName,
-        email = user.email,
-        isAnonymous = user.isAnonymous,
-        providerId = user.providerId,
-    )
 }
