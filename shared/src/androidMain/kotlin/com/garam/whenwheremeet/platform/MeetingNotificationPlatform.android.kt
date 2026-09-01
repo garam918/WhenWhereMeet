@@ -49,8 +49,9 @@ actual fun rememberMeetingNotificationPlatform(): MeetingNotificationPlatform {
 
     return remember(context, alarmeeService, permissionLauncher) {
         AlarmeeMeetingNotificationPlatform(
-            alarmeeService = alarmeeService,
+            pushService = alarmeeService.push,
             platformName = "android",
+            allowDeferredTokenRegistration = true,
             requestSystemPermission = { onResult ->
                 when {
                     Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU -> onResult(true)
