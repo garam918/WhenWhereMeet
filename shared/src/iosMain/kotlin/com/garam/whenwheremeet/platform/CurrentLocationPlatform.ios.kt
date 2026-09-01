@@ -23,9 +23,18 @@ actual fun rememberCurrentLocationPlatform(): CurrentLocationPlatform = remember
 }
 
 @OptIn(ExperimentalForeignApi::class)
-private class IosCurrentLocationPlatform : NSObject(), CurrentLocationPlatform, CLLocationManagerDelegateProtocol {
-    private val manager = CLLocationManager().apply { delegate = this@IosCurrentLocationPlatform }
+private class IosCurrentLocationPlatform : CurrentLocationPlatform {
+    private val manager = CLLocationManager()
+    private val locationDelegate = CurrentLocationDelegate(
+        onAuthorizationChanged = ::handleAuthorization,
+        onLocationUpdated = ::handleLocationUpdated,
+        onLocationFailed = ::handleLocationFailed,
+    )
     private var pendingResult: ((CurrentLocationResult) -> Unit)? = null
+
+    init {
+        manager.delegate = locationDelegate
+    }
 
     override val isSupported: Boolean
         get() = CLLocationManager.locationServicesEnabled()
@@ -39,25 +48,13 @@ private class IosCurrentLocationPlatform : NSObject(), CurrentLocationPlatform, 
         handleAuthorization(CLLocationManager.authorizationStatus())
     }
 
-    override fun locationManagerDidChangeAuthorization(manager: CLLocationManager) {
-        handleAuthorization(CLLocationManager.authorizationStatus())
-    }
-
-    override fun locationManager(
-        manager: CLLocationManager,
-        didChangeAuthorizationStatus: CLAuthorizationStatus,
-    ) {
-        handleAuthorization(didChangeAuthorizationStatus)
-    }
-
-    override fun locationManager(manager: CLLocationManager, didUpdateLocations: List<*>) {
-        val location = didUpdateLocations.lastOrNull() as? CLLocation ?: return
+    private fun handleLocationUpdated(manager: CLLocationManager, location: CLLocation) {
         manager.stopUpdatingLocation()
         val point = location.coordinate.useContents { GeoPoint(latitude, longitude) }
         complete(CurrentLocationResult.Success(point))
     }
 
-    override fun locationManager(manager: CLLocationManager, didFailWithError: NSError) {
+    private fun handleLocationFailed(manager: CLLocationManager) {
         manager.stopUpdatingLocation()
         complete(CurrentLocationResult.Unavailable)
     }
@@ -77,5 +74,32 @@ private class IosCurrentLocationPlatform : NSObject(), CurrentLocationPlatform, 
         val callback = pendingResult ?: return
         pendingResult = null
         callback(result)
+    }
+}
+
+@OptIn(ExperimentalForeignApi::class)
+private class CurrentLocationDelegate(
+    private val onAuthorizationChanged: (CLAuthorizationStatus) -> Unit,
+    private val onLocationUpdated: (CLLocationManager, CLLocation) -> Unit,
+    private val onLocationFailed: (CLLocationManager) -> Unit,
+) : NSObject(), CLLocationManagerDelegateProtocol {
+    override fun locationManagerDidChangeAuthorization(manager: CLLocationManager) {
+        onAuthorizationChanged(CLLocationManager.authorizationStatus())
+    }
+
+    override fun locationManager(
+        manager: CLLocationManager,
+        didChangeAuthorizationStatus: CLAuthorizationStatus,
+    ) {
+        onAuthorizationChanged(didChangeAuthorizationStatus)
+    }
+
+    override fun locationManager(manager: CLLocationManager, didUpdateLocations: List<*>) {
+        val location = didUpdateLocations.lastOrNull() as? CLLocation ?: return
+        onLocationUpdated(manager, location)
+    }
+
+    override fun locationManager(manager: CLLocationManager, didFailWithError: NSError) {
+        onLocationFailed(manager)
     }
 }
