@@ -19,6 +19,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import com.garam.whenwheremeet.data.local.KeyValueStorage
 import com.garam.whenwheremeet.di.appModule
 import com.garam.whenwheremeet.domain.model.CalendarEventDraft
+import com.garam.whenwheremeet.domain.usecase.SyncUserProfileUseCase
 import com.garam.whenwheremeet.platform.AuthSession
 import com.garam.whenwheremeet.platform.CalendarLaunchResult
 import com.garam.whenwheremeet.platform.CurrentLocationResult
@@ -70,6 +71,7 @@ fun App() {
 @Composable
 private fun AppContent() {
     val storage = koinInject<KeyValueStorage>()
+    val syncUserProfile = koinInject<SyncUserProfileUseCase>()
     val restoredAuthSession = remember { currentAuthSession() }
     var authSession by remember {
         mutableStateOf(restoredAuthSession?.takeUnless(AuthSession::isAnonymous))
@@ -131,6 +133,19 @@ private fun AppContent() {
         if (storage.getString(CachedAccountIdKey) != session.uid) {
             appState.clearLocalCache()
             storage.putString(CachedAccountIdKey, session.uid)
+        }
+        runCatching {
+            syncUserProfile(
+                userId = session.uid,
+                email = session.email,
+                displayName = session.displayName,
+                providerId = session.providerId,
+                isAnonymous = session.isAnonymous,
+                createdAt = session.createdAt,
+                lastLoginAt = session.lastLoginAt,
+            )
+        }.onFailure {
+            snackbarHostState.showSnackbar("회원 기본 정보를 저장하지 못했어요. 다음 실행 시 다시 시도할게요.")
         }
         appState.restoreAccountMeetings()
     }
