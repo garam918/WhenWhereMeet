@@ -4,8 +4,10 @@ import com.garam.whenwheremeet.data.local.platformKeyValueStorage
 import com.garam.whenwheremeet.data.repository.LocalMeetingRepository
 import com.garam.whenwheremeet.data.repository.WebFirebaseAuth
 import com.garam.whenwheremeet.data.repository.WebFirestoreMeetingRepository
+import com.garam.whenwheremeet.data.repository.WebFirestoreUserProfileRepository
 import com.garam.whenwheremeet.data.repository.webFirebaseConfig
 import com.garam.whenwheremeet.domain.repository.MeetingRepository
+import com.garam.whenwheremeet.domain.repository.UserProfileRepository
 import com.garam.whenwheremeet.platform.AuthSession
 
 actual fun createMeetingRepository(localRepository: LocalMeetingRepository): MeetingRepository =
@@ -15,6 +17,11 @@ actual fun createMeetingRepository(localRepository: LocalMeetingRepository): Mee
         } else {
             localRepository
         }
+    }
+
+actual fun createUserProfileRepository(): UserProfileRepository =
+    webFirebaseConfig().let { config ->
+        WebFirestoreUserProfileRepository(config, WebFirebaseAuth(config))
     }
 
 actual fun currentAuthSession(): AuthSession? =
