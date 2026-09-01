@@ -3,10 +3,6 @@ package com.garam.whenwheremeet.platform
 import com.tweener.alarmee.PushNotificationServiceRegistry
 
 class AlarmeePushBridge {
-    fun onNewToken(token: String) {
-        PushNotificationServiceRegistry.notifyTokenUpdated(token)
-    }
-
     fun onNotificationReceived(userInfo: Map<Any?, *>?) {
         val data = userInfo
             ?.mapNotNull { (key, value) ->
