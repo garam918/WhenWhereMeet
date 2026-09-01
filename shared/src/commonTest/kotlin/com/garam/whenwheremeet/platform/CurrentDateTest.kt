@@ -25,4 +25,20 @@ class CurrentDateTest {
             Instant.parse("2026-08-12T15:00:00Z").toKoreaLocalDate(),
         )
     }
+
+    @Test
+    fun koreaDateTimeUsesFirestoreIsoFormatWithUtcPlusNineOffset() {
+        assertEquals(
+            "2026-09-01T21:05:30+09:00",
+            Instant.parse("2026-09-01T12:05:30Z").toKoreaIsoDateTimeString(),
+        )
+    }
+
+    @Test
+    fun utcFirestoreDateTimeCanBeNormalizedWithoutChangingTheInstant() {
+        assertEquals(
+            "2026-09-01T21:05:30+09:00",
+            "2026-09-01T12:05:30Z".toKoreaIsoDateTimeStringOrNull(),
+        )
+    }
 }
