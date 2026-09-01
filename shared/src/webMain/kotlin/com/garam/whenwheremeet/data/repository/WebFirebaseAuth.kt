@@ -15,12 +15,15 @@ import web.http.Headers
 import web.http.RequestInit
 import web.http.RequestMethod
 import kotlin.js.ExperimentalWasmJsInterop
+import kotlin.time.Instant
 
 private const val WebAuthUidKey = "web_auth_uid"
 private const val WebAuthIdTokenKey = "web_auth_id_token"
 private const val WebAuthProviderKey = "web_auth_provider"
 private const val WebAuthDisplayNameKey = "web_auth_display_name"
 private const val WebAuthEmailKey = "web_auth_email"
+private const val WebAuthCreatedAtMillisKey = "web_auth_created_at_millis"
+private const val WebAuthLastLoginAtMillisKey = "web_auth_last_login_at_millis"
 private const val WebAuthIsAnonymousKey = "web_auth_is_anonymous"
 private const val WebAuthChangeIdKey = "web_auth_change_id"
 private const val WebAuthErrorIdKey = "web_auth_error_id"
@@ -49,6 +52,8 @@ class WebFirebaseAuth(
             isAnonymous = storage.getString(WebAuthIsAnonymousKey)?.toBooleanStrictOrNull()
                 ?: (providerId == "web-local" || providerId == "firebase-anonymous"),
             providerId = providerId,
+            createdAt = storage.getString(WebAuthCreatedAtMillisKey).toInstantOrNull(),
+            lastLoginAt = storage.getString(WebAuthLastLoginAtMillisKey).toInstantOrNull(),
         )
     }
 
@@ -122,10 +127,15 @@ class WebFirebaseAuth(
         storage.remove(WebAuthProviderKey)
         storage.remove(WebAuthDisplayNameKey)
         storage.remove(WebAuthEmailKey)
+        storage.remove(WebAuthCreatedAtMillisKey)
+        storage.remove(WebAuthLastLoginAtMillisKey)
         storage.remove(WebAuthIsAnonymousKey)
     }
 
 }
+
+private fun String?.toInstantOrNull(): Instant? =
+    this?.toLongOrNull()?.let(Instant::fromEpochMilliseconds)
 
 @OptIn(ExperimentalWasmJsInterop::class)
 fun jsonRequest(method: RequestMethod, body: String? = null, bearerToken: String? = null): RequestInit {
