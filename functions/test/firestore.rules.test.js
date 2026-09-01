@@ -233,10 +233,100 @@ test("익명 인증 사용자는 방 코드조차 읽을 수 없다", async () =
   await assertFails(getDoc(doc(firestore, "roomCodes", ROOM_ID)));
 });
 
+test("알림 기기는 본인 경로에 lastLoginAt을 포함한 허용 필드만 저장할 수 있다", async () => {
+  const firestore = authenticatedFirestore(HOST_UID);
+  const deviceData = {
+    token: "fcm-token",
+    platform: "android",
+    lastLoginAt: "2026-09-01T12:00:00Z",
+    updatedAt: "2026-09-01T12:00:00Z",
+  };
+
+  await assertSucceeds(setDoc(
+    doc(firestore, "users", HOST_UID, "notificationDevices", "installation-id"),
+    deviceData,
+  ));
+  await assertFails(setDoc(
+    doc(firestore, "users", MEMBER_UID, "notificationDevices", "installation-id"),
+    deviceData,
+  ));
+  await assertFails(setDoc(
+    doc(firestore, "users", HOST_UID, "notificationDevices", "unexpected-field"),
+    {...deviceData, exactLocation: "저장하면 안 되는 위치"},
+  ));
+});
+
+test("소셜 로그인 사용자는 자신의 기본 회원 문서만 생성하고 읽을 수 있다", async () => {
+  const firestore = authenticatedFirestore(HOST_UID);
+  await assertSucceeds(setDoc(doc(firestore, "users", HOST_UID), userProfileData()));
+  await assertSucceeds(getDoc(doc(firestore, "users", HOST_UID)));
+  await assertFails(setDoc(doc(firestore, "users", MEMBER_UID), userProfileData()));
+
+  const memberFirestore = authenticatedFirestore(MEMBER_UID);
+  await assertFails(getDoc(doc(memberFirestore, "users", HOST_UID)));
+});
+
+test("회원 기본 정보는 허용된 필드만 저장하고 가입일은 변경할 수 없다", async () => {
+  const firestore = authenticatedFirestore(HOST_UID);
+  const userReference = doc(firestore, "users", HOST_UID);
+  await assertSucceeds(setDoc(userReference, userProfileData()));
+  await assertSucceeds(updateDoc(userReference, {
+    email: "changed@example.com",
+    lastLoginAt: "2026-08-21T10:00:00Z",
+    updatedAt: "2026-08-21T10:00:00Z",
+  }));
+  await assertFails(updateDoc(userReference, {
+    createdAt: "2026-08-21T10:00:00Z",
+  }));
+  await assertFails(updateDoc(userReference, {
+    exactHomeAddress: "저장하면 안 되는 주소",
+  }));
+});
+
+test("기존 UTC 가입일은 같은 ISO 형식의 한국 시간으로 한 번 변환할 수 있다", async () => {
+  const firestore = authenticatedFirestore(HOST_UID);
+  const userReference = doc(firestore, "users", HOST_UID);
+  await assertSucceeds(setDoc(userReference, userProfileData()));
+  await assertSucceeds(updateDoc(userReference, {
+    createdAt: "2026-08-20T19:00:00+09:00",
+    lastLoginAt: "2026-09-01T21:00:00+09:00",
+    updatedAt: "2026-09-01T21:00:00+09:00",
+  }));
+  await assertFails(updateDoc(userReference, {
+    createdAt: "2026-08-21T19:00:00+09:00",
+  }));
+});
+
+test("필드가 없던 기존 users 부모 문서에는 기본 정보를 보완할 수 있다", async () => {
+  await testEnvironment.withSecurityRulesDisabled(async (context) => {
+    await setDoc(doc(context.firestore(), "users", HOST_UID), {});
+  });
+  const firestore = authenticatedFirestore(HOST_UID);
+  await assertSucceeds(setDoc(doc(firestore, "users", HOST_UID), userProfileData()));
+});
+
+test("익명 인증 사용자는 회원 기본 문서를 만들 수 없다", async () => {
+  const firestore = testEnvironment.authenticatedContext("anonymous-user", {
+    firebase: {sign_in_provider: "anonymous"},
+  }).firestore();
+  await assertFails(setDoc(doc(firestore, "users", "anonymous-user"), userProfileData()));
+});
+
 function authenticatedFirestore(uid) {
   return testEnvironment.authenticatedContext(uid, {
     firebase: {sign_in_provider: "google.com"},
   }).firestore();
+}
+
+function userProfileData() {
+  return {
+    email: "member@example.com",
+    displayName: "테스트 회원",
+    providerId: "google.com",
+    createdAt: "2026-08-20T10:00:00Z",
+    lastLoginAt: "2026-08-20T10:00:00Z",
+    updatedAt: "2026-08-20T10:00:00Z",
+  };
 }
 
 function roomData() {
