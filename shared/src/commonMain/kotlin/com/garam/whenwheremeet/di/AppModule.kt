@@ -1,6 +1,7 @@
 package com.garam.whenwheremeet.di
 
 import com.garam.whenwheremeet.createMeetingRepository
+import com.garam.whenwheremeet.createUserProfileRepository
 import com.garam.whenwheremeet.data.local.KeyValueStorage
 import com.garam.whenwheremeet.data.local.platformKeyValueStorage
 import com.garam.whenwheremeet.data.provider.NationalStationSearchProvider
@@ -14,7 +15,9 @@ import com.garam.whenwheremeet.domain.provider.PlaceRecommendationProvider
 import com.garam.whenwheremeet.domain.provider.PlaceSearchProvider
 import com.garam.whenwheremeet.domain.provider.TravelTimeProvider
 import com.garam.whenwheremeet.domain.repository.MeetingRepository
+import com.garam.whenwheremeet.domain.repository.UserProfileRepository
 import com.garam.whenwheremeet.domain.usecase.RecommendMeetingAreasUseCase
+import com.garam.whenwheremeet.domain.usecase.SyncUserProfileUseCase
 import com.garam.whenwheremeet.presentation.state.MeetingAppState
 import org.koin.dsl.module
 
@@ -22,6 +25,8 @@ val appModule = module {
     single<KeyValueStorage> { platformKeyValueStorage() }
     single { LocalMeetingRepository(get()) }
     single<MeetingRepository> { createMeetingRepository(get()) }
+    single<UserProfileRepository> { createUserProfileRepository() }
+    single { SyncUserProfileUseCase(get()) }
 
     single<LocationSearchProvider> { NationalStationSearchProvider() }
     single<TravelTimeProvider> { StaticMetropolitanTransitTimeProvider() }
