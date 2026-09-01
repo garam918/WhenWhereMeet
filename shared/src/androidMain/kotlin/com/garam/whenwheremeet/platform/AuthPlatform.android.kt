@@ -13,7 +13,6 @@ import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import com.google.android.gms.common.api.ApiException
 import dev.gitlive.firebase.Firebase
-import dev.gitlive.firebase.auth.FirebaseUser
 import dev.gitlive.firebase.auth.GoogleAuthProvider
 import dev.gitlive.firebase.auth.auth
 import kotlinx.coroutines.CompletableDeferred
@@ -38,7 +37,7 @@ actual fun rememberAuthPlatform(): AuthPlatform {
                     runCatching { anonymousUser.linkWithCredential(credential).user }
                         .getOrElse { Firebase.auth.signInWithCredential(credential).user }
                 }
-                pending.complete(user.requireSession())
+                pending.complete(user.requireAuthSession(providerId = "google.com"))
             } catch (error: Throwable) {
                 pending.completeExceptionally(error)
             }
@@ -85,15 +84,4 @@ private fun Context.firebaseWebClientId(): String {
     val resourceId = resources.getIdentifier("default_web_client_id", "string", packageName)
     require(resourceId != 0) { "Firebase default_web_client_id 리소스를 찾을 수 없습니다. google-services.json 설정을 확인해주세요." }
     return getString(resourceId)
-}
-
-private fun FirebaseUser?.requireSession(): AuthSession {
-    val user = requireNotNull(this) { "Firebase 로그인 사용자 정보를 가져오지 못했습니다." }
-    return AuthSession(
-        uid = user.uid,
-        displayName = user.displayName,
-        email = user.email,
-        isAnonymous = user.isAnonymous,
-        providerId = user.providerId,
-    )
 }
