@@ -8,6 +8,8 @@
         provider: "web_auth_provider",
         displayName: "web_auth_display_name",
         email: "web_auth_email",
+        createdAtMillis: "web_auth_created_at_millis",
+        lastLoginAtMillis: "web_auth_last_login_at_millis",
         isAnonymous: "web_auth_is_anonymous",
         changeId: "web_auth_change_id",
         errorId: "web_auth_error_id",
@@ -39,6 +41,8 @@
         window.localStorage.removeItem(storageKeys.provider);
         window.localStorage.removeItem(storageKeys.displayName);
         window.localStorage.removeItem(storageKeys.email);
+        window.localStorage.removeItem(storageKeys.createdAtMillis);
+        window.localStorage.removeItem(storageKeys.lastLoginAtMillis);
         window.localStorage.removeItem(storageKeys.isAnonymous);
     }
 
@@ -62,6 +66,13 @@
         window.localStorage.setItem(storageKeys.isAnonymous, String(user.isAnonymous));
         setOptionalStorageValue(storageKeys.displayName, user.displayName);
         setOptionalStorageValue(storageKeys.email, user.email);
+        setOptionalStorageValue(storageKeys.createdAtMillis, firebaseDateMillis(user.metadata && user.metadata.creationTime));
+        setOptionalStorageValue(storageKeys.lastLoginAtMillis, firebaseDateMillis(user.metadata && user.metadata.lastSignInTime));
+    }
+
+    function firebaseDateMillis(value) {
+        var milliseconds = typeof value === "string" ? Date.parse(value) : NaN;
+        return Number.isFinite(milliseconds) ? String(milliseconds) : null;
     }
 
     async function storeUserSession(user) {
