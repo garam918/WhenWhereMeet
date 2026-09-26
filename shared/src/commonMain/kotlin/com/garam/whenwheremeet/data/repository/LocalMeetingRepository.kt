@@ -86,6 +86,36 @@ class LocalMeetingRepository(
         persist()
     }
 
+    fun replaceParticipantAvailabilities(
+        roomId: String,
+        participantIds: Set<String>,
+        availabilities: List<Availability>,
+    ) {
+        snapshot = snapshot.copy(
+            availabilities = snapshot.availabilities.filterNot {
+                it.roomId == roomId && it.participantId in participantIds
+            } + availabilities.filter { it.roomId == roomId && it.participantId in participantIds },
+        )
+        persist()
+    }
+
+    fun getAppliedRoomSyncRevisions(roomId: String): RoomSyncRevisions? = snapshot.roomSyncRevisions[roomId]
+
+    fun saveAppliedRoomSyncRevisions(roomId: String, revisions: RoomSyncRevisions) {
+        snapshot = snapshot.copy(roomSyncRevisions = snapshot.roomSyncRevisions + (roomId to revisions))
+        persist()
+    }
+
+    fun updateAppliedRoomSyncRevisions(roomId: String, transform: (RoomSyncRevisions) -> RoomSyncRevisions) {
+        val current = snapshot.roomSyncRevisions[roomId] ?: return
+        saveAppliedRoomSyncRevisions(roomId, transform(current))
+    }
+
+    fun removeAppliedRoomSyncRevisions(roomId: String) {
+        snapshot = snapshot.copy(roomSyncRevisions = snapshot.roomSyncRevisions - roomId)
+        persist()
+    }
+
     fun importStartLocations(roomId: String, startLocations: List<UserStartLocation>) {
         snapshot = snapshot.copy(
             startLocations = snapshot.startLocations.filterNot { it.roomId == roomId } + startLocations,
@@ -125,6 +155,7 @@ class LocalMeetingRepository(
             placeVotes = snapshot.placeVotes.filter { it.roomId in roomIds },
             destinationStationProposals = snapshot.destinationStationProposals.filter { it.roomId in roomIds },
             destinationStationVotes = snapshot.destinationStationVotes.filter { it.roomId in roomIds },
+            roomSyncRevisions = snapshot.roomSyncRevisions.filterKeys { it in roomIds },
         )
         persist()
     }
@@ -250,6 +281,7 @@ class LocalMeetingRepository(
                 it.roomId == roomId && it.participantId == participantId
             },
             currentParticipantIds = snapshot.currentParticipantIds - roomId,
+            roomSyncRevisions = snapshot.roomSyncRevisions - roomId,
         )
         touchRoom(roomId)
         persist()
@@ -269,6 +301,7 @@ class LocalMeetingRepository(
             placeVotes = snapshot.placeVotes.filterNot { it.roomId == roomId },
             destinationStationProposals = snapshot.destinationStationProposals.filterNot { it.roomId == roomId },
             destinationStationVotes = snapshot.destinationStationVotes.filterNot { it.roomId == roomId },
+            roomSyncRevisions = snapshot.roomSyncRevisions - roomId,
         )
         persist()
     }
@@ -527,6 +560,7 @@ class LocalMeetingRepository(
         val destinationStationProposals: List<DestinationStationProposal> = emptyList(),
         val destinationStationVotes: List<DestinationStationVote> = emptyList(),
         val friends: List<FriendProfile> = emptyList(),
+        val roomSyncRevisions: Map<String, RoomSyncRevisions> = emptyMap(),
     )
 
     private companion object {
