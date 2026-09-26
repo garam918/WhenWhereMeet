@@ -66,6 +66,13 @@ test("회원 탈퇴 시 호스트 방과 본인 참가 데이터, 위치, 친구
   const memberRoom = await firestore.doc(`meetingRooms/${MEMBER_ROOM_ID}`).get();
   assert.equal(memberRoom.exists, true);
   assert.equal(memberRoom.data().participantCount, 1);
+  assert.deepEqual(memberRoom.data().syncRevisions, {
+    participants: 1,
+    startLocationSummaries: 1,
+    destinationStationProposals: 1,
+    destinationStationVotes: 1,
+  });
+  assert.deepEqual(memberRoom.data().availabilityRevisions, {"delete-member-participant": 1});
   assert.equal((await firestore.doc(`meetingRooms/${MEMBER_ROOM_ID}/participants/delete-member-participant`).get()).exists, false);
   assert.equal((await firestore.doc(`meetingRooms/${MEMBER_ROOM_ID}/participants/other-host-participant`).get()).exists, true);
   assert.equal((await firestore.doc(`meetingRooms/${MEMBER_ROOM_ID}/availabilities/delete-member-participant-2026-08-21`).get()).exists, false);
