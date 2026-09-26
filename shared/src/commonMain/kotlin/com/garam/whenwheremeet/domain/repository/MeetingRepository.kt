@@ -32,6 +32,8 @@ interface MeetingRepository {
     }
     suspend fun refreshFriends() = Unit
     fun clearLocalCache() = Unit
+    // 실시간 리스너는 변경분만 과금되므로 화면을 벗어나도 유지한다. 폴링 방식은 방 화면에서만 확인한다.
+    val supportsRealtimeRoomUpdates: Boolean get() = false
     fun observeRoom(roomId: String): Flow<Unit> = emptyFlow()
     suspend fun createRoom(room: MeetingRoom, host: Participant) = createRoom(room, host, emptyList())
     suspend fun createRoom(room: MeetingRoom, host: Participant, invitedParticipants: List<Participant>)
