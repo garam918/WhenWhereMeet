@@ -1,7 +1,7 @@
 "use strict";
 
 const {initializeApp} = require("firebase-admin/app");
-const {getFirestore} = require("firebase-admin/firestore");
+const {FieldValue, getFirestore} = require("firebase-admin/firestore");
 
 initializeApp();
 
@@ -61,8 +61,17 @@ async function main() {
     });
   });
 
+  // Clients re-read location summaries only when this revision changes.
+  const summaryRoomRefs = new Map(summaryWrites.map((write) => [write.ref.parent.parent.path, write.ref.parent.parent]));
+  const revisionWrites = [...summaryRoomRefs.values()].map((roomRef) => ({
+    ref: roomRef,
+    data: {syncRevisions: {startLocationSummaries: FieldValue.increment(1)}},
+    merge: true,
+  }));
+
   if (!dryRun) {
     await writeInChunks(firestore, [...membershipWrites, ...summaryWrites]);
+    await writeInChunks(firestore, revisionWrites);
   }
   console.log(JSON.stringify({
     dryRun,
