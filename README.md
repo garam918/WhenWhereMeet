@@ -96,6 +96,13 @@ Account meeting restore and invite links:
 - Deploy Hosting after building the production web bundle so `/.well-known/assetlinks.json` and `/.well-known/apple-app-site-association` are reachable.
 - `assetlinks.json` currently contains the local debug certificate SHA-256. Add the Play App Signing and release certificate SHA-256 fingerprints before distributing a production Android build.
 
+Room sync revisions (Firestore read reduction):
+
+- Every write to a room subcollection also increments a counter on the room document in the same atomic write: `syncRevisions.{participants|startLocationSummaries|destinationStationProposals|destinationStationVotes}` and `availabilityRevisions.{participantId}`.
+- Clients read the room document first and re-read only the subcollections whose counter differs from the value stored in the local cache (`RoomSyncCoordinator`). Mobile keeps one room-document listener; web polls only the room document while the room screen is open.
+- Room documents must be written with field-level updates (`update`/`updateMask`), never full overwrites, or the counters are lost.
+- Deploy `firestore.rules`, Functions (`deleteAccountData`), and the web bundle together. App builds released before this change do not bump the counters, so their subcollection writes are not detected by newer clients.
+
 ---
 
 Learn more about [Kotlin Multiplatform](https://www.jetbrains.com/help/kotlin-multiplatform-dev/get-started.html)…
