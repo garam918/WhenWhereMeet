@@ -9,10 +9,12 @@ const {
   initializeTestEnvironment,
 } = require("@firebase/rules-unit-testing");
 const {
+  FieldPath,
   collection,
   doc,
   getDoc,
   getDocs,
+  increment,
   query,
   setDoc,
   updateDoc,
@@ -224,6 +226,71 @@ test("일반 참가자는 자신의 멤버십과 관련 데이터만 정리하�
     participantCount: 0,
     updatedAt: "2026-08-20T14:00:00+09:00",
   }));
+});
+
+test("참가자는 본인 날짜 응답과 함께 본인 가능 날짜 변경 번호만 올릴 수 있다", async () => {
+  const memberFirestore = authenticatedFirestore(MEMBER_UID);
+  const roomRef = doc(memberFirestore, "meetingRooms", ROOM_ID);
+  const batch = writeBatch(memberFirestore);
+  batch.set(
+    doc(memberFirestore, "meetingRooms", ROOM_ID, "availabilities", "member-participant-2026-08-22"),
+    availabilityData("member-participant", "2026-08-22"),
+  );
+  batch.update(roomRef, new FieldPath("availabilityRevisions", "member-participant"), increment(1));
+  await assertSucceeds(batch.commit());
+
+  await assertSucceeds(updateDoc(roomRef, new FieldPath("syncRevisions", "startLocationSummaries"), increment(1)));
+  await assertFails(updateDoc(roomRef, new FieldPath("availabilityRevisions", "host-participant"), increment(1)));
+  await assertFails(updateDoc(roomRef, {
+    "syncRevisions.participants": increment(1),
+    "title": "다른 제목",
+  }));
+  await assertFails(updateDoc(roomRef, {syncRevisions: "not-a-map"}));
+
+  const outsiderFirestore = authenticatedFirestore(OUTSIDER_UID);
+  await assertFails(updateDoc(
+    doc(outsiderFirestore, "meetingRooms", ROOM_ID),
+    new FieldPath("syncRevisions", "participants"),
+    increment(1),
+  ));
+});
+
+test("참가·후보역 제안·나가기 쓰기에서도 변경 번호를 함께 올릴 수 있다", async () => {
+  const outsiderFirestore = authenticatedFirestore(OUTSIDER_UID);
+  const joinBatch = writeBatch(outsiderFirestore);
+  joinBatch.update(doc(outsiderFirestore, "meetingRooms", ROOM_ID), {
+    "participantCount": 3,
+    "updatedAt": "2026-08-20T12:00:00+09:00",
+    "syncRevisions.participants": increment(1),
+  });
+  joinBatch.set(doc(outsiderFirestore, "meetingRooms", ROOM_ID, "participants", "outsider-participant"),
+    participantData("outsider-participant", OUTSIDER_UID, false));
+  joinBatch.set(doc(outsiderFirestore, "meetingRooms", ROOM_ID, "members", OUTSIDER_UID),
+    memberData(OUTSIDER_UID, "outsider-participant", "participant"));
+  joinBatch.set(doc(outsiderFirestore, "meetingRooms", ROOM_ID, "nicknameKeys", "외부인"), {
+    participantId: "outsider-participant",
+  });
+  await assertSucceeds(joinBatch.commit());
+
+  const memberFirestore = authenticatedFirestore(MEMBER_UID);
+  await assertSucceeds(updateDoc(doc(memberFirestore, "meetingRooms", ROOM_ID), {
+    "status": "PLACE_SELECTING",
+    "confirmedPlace": null,
+    "updatedAt": "2026-08-20T13:00:00+09:00",
+    "syncRevisions.destinationStationProposals": increment(1),
+  }));
+
+  const leaveBatch = writeBatch(memberFirestore);
+  leaveBatch.update(
+    doc(memberFirestore, "meetingRooms", ROOM_ID),
+    "participantCount", 2,
+    "updatedAt", "2026-08-20T14:00:00+09:00",
+    new FieldPath("syncRevisions", "participants"), increment(1),
+    new FieldPath("availabilityRevisions", "member-participant"), increment(1),
+  );
+  leaveBatch.delete(doc(memberFirestore, "meetingRooms", ROOM_ID, "members", MEMBER_UID));
+  leaveBatch.delete(doc(memberFirestore, "meetingRooms", ROOM_ID, "participants", "member-participant"));
+  await assertSucceeds(leaveBatch.commit());
 });
 
 test("익명 인증 사용자는 방 코드조차 읽을 수 없다", async () => {
