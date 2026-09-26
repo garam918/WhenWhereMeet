@@ -34,6 +34,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -57,6 +58,24 @@ class WebFirestoreMeetingRepository(
     private val auth: WebFirebaseAuth,
 ) : MeetingRepository {
     private val json = Json { ignoreUnknownKeys = true }
+    private val roomSync = RoomSyncCoordinator(
+        local = local,
+        remote = object : RoomSyncRemoteSource {
+            override suspend fun loadParticipants(roomId: String) =
+                this@WebFirestoreMeetingRepository.loadParticipants(roomId)
+            override suspend fun loadAvailabilities(roomId: String) =
+                this@WebFirestoreMeetingRepository.loadAvailabilities(roomId)
+            override suspend fun loadParticipantAvailabilities(roomId: String, participantId: String) =
+                this@WebFirestoreMeetingRepository.loadParticipantAvailabilities(roomId, participantId)
+            override suspend fun loadVisibleStartLocations(roomId: String, currentParticipantId: String) =
+                this@WebFirestoreMeetingRepository.loadVisibleStartLocations(roomId, currentParticipantId)
+            override suspend fun loadDestinationStationProposals(roomId: String) =
+                this@WebFirestoreMeetingRepository.loadDestinationStationProposals(roomId)
+            override suspend fun loadDestinationStationVotes(roomId: String) =
+                this@WebFirestoreMeetingRepository.loadDestinationStationVotes(roomId)
+        },
+        currentAccountId = { auth.currentSession()?.uid },
+    )
 
     override fun getRooms(): List<MeetingRoom> = local.getRooms()
     override fun getRoom(roomIdOrCode: String): MeetingRoom? = local.getRoom(roomIdOrCode)
@@ -93,43 +112,36 @@ class WebFirestoreMeetingRepository(
         val roomDoc = getDocument("meetingRooms/$roomId") ?: return null
         val room = roomDoc.fields().toMeetingRoom()
         val currentParticipant = loadCurrentUserParticipant(room.id)
-        val participants = if (currentParticipant == null) emptyList() else loadParticipants(room.id)
         local.importRoom(
             room,
-            participants,
+            listOfNotNull(currentParticipant),
             local.getCurrentParticipantId(room.id) ?: currentParticipant?.id,
         )
         if (currentParticipant != null) {
-            local.importAvailabilities(room.id, loadAvailabilities(room.id))
-            local.importStartLocations(room.id, loadVisibleStartLocations(room.id, currentParticipant.id))
-            local.importDestinationStationProposals(room.id, loadDestinationStationProposals(room.id))
-            local.importDestinationStationVotes(room.id, loadDestinationStationVotes(room.id))
+            applyRoomDocument(room.id, roomDoc)
         }
-        return room
+        return local.getRoom(room.id) ?: room
     }
 
     override suspend fun refreshRoom(roomId: String) {
-        val localRoom = local.getRoom(roomId)
-        val remoteRoomId = localRoom?.id ?: roomId.normalizedRoomCode()
-        val roomDoc = getDocument("meetingRooms/$remoteRoomId")
+        val remoteRoomId = local.getRoom(roomId)?.id ?: roomId.normalizedRoomCode()
+        applyRoomDocument(remoteRoomId, getDocument("meetingRooms/$remoteRoomId"))
+    }
+
+    // 방 문서 1건으로 변경 번호를 비교하고, 바뀐 하위 컬렉션만 다시 읽는다.
+    private suspend fun applyRoomDocument(roomId: String, roomDoc: JsonObject?) {
         if (roomDoc == null) {
-            localRoom?.let { local.deleteRoom(it.id) }
+            roomSync.removeLocalRoom(roomId)
             return
         }
-        val remoteRoom = roomDoc.fields().toMeetingRoom()
-        val participants = loadParticipants(remoteRoom.id)
-        local.importRoom(
-            room = mergeRemoteRoom(remoteRoom),
-            participants = participants,
-            currentParticipantId = local.getCurrentParticipantId(remoteRoom.id)
-                ?: participants.firstOrNull { it.accountId == currentAuthUid() }?.id,
+        val fields = roomDoc.fields()
+        roomSync.applyRemoteRoom(
+            remoteRoom = fields.toMeetingRoom(),
+            remoteRevisions = RoomSyncRevisions(
+                collections = fields.longMapField(ROOM_SYNC_REVISIONS_FIELD),
+                availabilities = fields.longMapField(ROOM_AVAILABILITY_REVISIONS_FIELD),
+            ),
         )
-        local.importAvailabilities(remoteRoom.id, loadAvailabilities(remoteRoom.id))
-        local.getCurrentParticipantId(remoteRoom.id)?.let { participantId ->
-            local.importStartLocations(remoteRoom.id, loadVisibleStartLocations(remoteRoom.id, participantId))
-        }
-        local.importDestinationStationProposals(remoteRoom.id, loadDestinationStationProposals(remoteRoom.id))
-        local.importDestinationStationVotes(remoteRoom.id, loadDestinationStationVotes(remoteRoom.id))
     }
 
     override suspend fun refreshFriends() {
@@ -138,6 +150,7 @@ class WebFirestoreMeetingRepository(
         )
     }
 
+    // REST에는 리스너가 없어 폴링한다. 변경이 없으면 한 번에 방 문서 1건만 읽는다.
     override fun observeRoom(roomId: String): Flow<Unit> = flow {
         while (true) {
             refreshRoom(roomId)
@@ -194,6 +207,8 @@ class WebFirestoreMeetingRepository(
         }
         commit(*writes.toTypedArray())
         local.createRoom(roomToStore, hostToStore.copy(accountId = authUid), invitedToStore)
+        // 새 방에는 변경 번호 필드가 없으므로(0) 방금 쓴 로컬 데이터가 최신이다.
+        local.saveAppliedRoomSyncRevisions(code, RoomSyncRevisions())
     }
 
     override suspend fun joinRoom(participant: Participant) {
@@ -224,9 +239,11 @@ class WebFirestoreMeetingRepository(
                         ),
                         exists = true,
                     ),
+                    roomTransformWrite(room.id, listOf(syncRevisionFieldPath(RoomSyncCollection.PARTICIPANTS))),
                 )
             }
-            local.importRoom(room, loadParticipants(room.id), existingParticipant.id)
+            // 참여자 목록은 방 화면의 동기화가 변경 번호를 보고 다시 받는다.
+            local.importRoom(room, local.getParticipants(room.id).ifEmpty { listOf(existingParticipant) }, existingParticipant.id)
             return
         }
         val currentRoomDoc = requireNotNull(getDocument("meetingRooms/${room.id}")) { "방 코드를 확인해주세요." }
@@ -236,12 +253,14 @@ class WebFirestoreMeetingRepository(
         require(getDocument("meetingRooms/${room.id}/nicknameKeys/${participant.nickname.nicknameKey()}") == null) {
             "이미 사용 중인 닉네임입니다."
         }
-        val updatedRoom = room.copy(updatedAt = participant.joinedAt)
         commit(
-            updateWrite(
-                "meetingRooms/${room.id}",
-                updatedRoom.toFirestoreFields(participantCount = currentParticipantCount + 1, hostAuthUid = currentRoomDoc.fields().optionalStringField("hostAuthUid")),
-                exists = true,
+            roomUpdateWrite(
+                roomId = room.id,
+                fields = buildJsonObject {
+                    put("participantCount", integerValue(currentParticipantCount + 1))
+                    put("updatedAt", stringValue(participant.joinedAt.toKoreaIsoString()))
+                },
+                incrementFieldPaths = listOf(syncRevisionFieldPath(RoomSyncCollection.PARTICIPANTS)),
             ),
             updateWrite("meetingRooms/${room.id}/participants/${participant.id}", participantToStore.toFirestoreFields(authUid), exists = false),
             updateWrite(
@@ -251,11 +270,9 @@ class WebFirestoreMeetingRepository(
             ),
             updateWrite("meetingRooms/${room.id}/nicknameKeys/${participant.nickname.nicknameKey()}", nicknameFields(participant.id), exists = false),
         )
-        local.importRoom(
-            room = room,
-            participants = (loadParticipants(room.id) + participantToStore.copy(accountId = authUid)).distinctBy { it.id },
-            currentParticipantId = participant.id,
-        )
+        // 새로 참여한 방은 적용된 변경 번호를 비워 방 화면에서 전체를 한 번 받게 한다.
+        local.importRoom(room, listOf(participantToStore.copy(accountId = authUid)), participant.id)
+        local.removeAppliedRoomSyncRevisions(room.id)
     }
 
     override suspend fun leaveRoom(roomId: String, participantId: String) {
@@ -264,20 +281,21 @@ class WebFirestoreMeetingRepository(
         val participant = getParticipants(room.id).firstOrNull { it.id == participantId }
             ?: throw IllegalArgumentException("참여자 정보를 찾을 수 없습니다.")
         val currentRoomDoc = requireNotNull(getDocument("meetingRooms/${room.id}")) { "방 정보를 찾을 수 없습니다." }
-        val current = currentRoomDoc.fields()
-        val participantCount = (current.intField("participantCount") - 1).coerceAtLeast(1)
-        val updated = room.copy(updatedAt = Clock.System.now())
+        val participantCount = (currentRoomDoc.fields().intField("participantCount") - 1).coerceAtLeast(1)
         val writes = mutableListOf<JsonObject>()
-        writes += updateWrite(
-            "meetingRooms/${room.id}",
-            updated.toFirestoreFields(participantCount = participantCount, hostAuthUid = current.optionalStringField("hostAuthUid")),
-            exists = true,
+        writes += roomUpdateWrite(
+            roomId = room.id,
+            fields = buildJsonObject {
+                put("participantCount", integerValue(participantCount))
+                put("updatedAt", stringValue(Clock.System.now().toKoreaIsoString()))
+            },
+            incrementFieldPaths = RoomSyncCollection.entries.map(::syncRevisionFieldPath) +
+                availabilityRevisionFieldPath(participantId),
         )
         writes += deleteWrite("meetingRooms/${room.id}/participants/$participantId")
         writes += deleteWrite("meetingRooms/${room.id}/members/${currentAuthUid()}")
         writes += deleteWrite("meetingRooms/${room.id}/nicknameKeys/${participant.nickname.nicknameKey()}")
-        loadAvailabilities(room.id)
-            .filter { it.participantId == participantId }
+        loadParticipantAvailabilities(room.id, participantId)
             .forEach { writes += deleteWrite("meetingRooms/${room.id}/availabilities/${participantId}-${it.date}") }
         writes += deleteWrite("meetingRooms/${room.id}/startLocations/$participantId")
         writes += deleteWrite("meetingRooms/${room.id}/startLocationSummaries/$participantId")
@@ -299,42 +317,44 @@ class WebFirestoreMeetingRepository(
 
     override suspend fun saveAvailabilities(roomId: String, participantId: String, values: Map<LocalDate, AvailabilityStatus>) {
         val room = getRoom(roomId) ?: throw IllegalArgumentException("방 정보를 찾을 수 없습니다.")
-        val previous = loadAvailabilities(room.id).filter { it.participantId == participantId }
-        val writes = mutableListOf<JsonObject>()
-        previous
-            .filterNot { values.containsKey(it.date) }
-            .forEach { writes += deleteWrite("meetingRooms/${room.id}/availabilities/$participantId-${it.date}") }
-        values.forEach { (date, status) ->
-            val availability = Availability(room.id, participantId, date, status, Clock.System.now())
-            writes += updateWrite(
-                "meetingRooms/${room.id}/availabilities/$participantId-$date",
-                availability.toFirestoreFields(),
-                exists = null,
-            )
+        val previous = local.getAvailabilities(room.id)
+            .filter { it.participantId == participantId }
+            .associate { it.date to it.status }
+        // 로컬 캐시와 비교해 바뀐 날짜만 쓴다. 로컬은 변경 번호 동기화로 최신 상태를 유지한다.
+        val changes = AvailabilityChanges.between(previous, values)
+        if (changes.isEmpty) return
+        roomSync.commitOwnChange(room.id, applyRevision = { it.incrementedAvailability(participantId) }) {
+            val now = Clock.System.now()
+            val writes = mutableListOf<JsonObject>()
+            changes.deletedDates.forEach {
+                writes += deleteWrite("meetingRooms/${room.id}/availabilities/$participantId-$it")
+            }
+            changes.upserts.forEach { (date, status) ->
+                writes += updateWrite(
+                    "meetingRooms/${room.id}/availabilities/$participantId-$date",
+                    Availability(room.id, participantId, date, status, now).toFirestoreFields(),
+                    exists = null,
+                )
+            }
+            writes += roomTransformWrite(room.id, listOf(availabilityRevisionFieldPath(participantId)))
+            commit(*writes.toTypedArray())
+            local.saveAvailabilities(room.id, participantId, values)
         }
-        commit(*writes.toTypedArray())
-        local.saveAvailabilities(room.id, participantId, values)
     }
 
     override suspend fun confirmDate(roomId: String, date: LocalDate) {
         val room = getRoom(roomId) ?: throw IllegalArgumentException("방 정보를 찾을 수 없습니다.")
-        val roomDoc = requireNotNull(getDocument("meetingRooms/${room.id}")) { "방 정보를 찾을 수 없습니다." }
         val dateChanged = room.confirmedDate != null && room.confirmedDate != date
-        val updated = room.copy(
-            status = MeetingStatus.DATE_CONFIRMED,
-            confirmedDate = date,
-            selectedAreaCandidateId = if (dateChanged) null else room.selectedAreaCandidateId,
-            confirmedPlace = if (dateChanged) null else room.confirmedPlace,
-            updatedAt = Clock.System.now(),
-        )
         commit(
-            updateWrite(
-                "meetingRooms/${room.id}",
-                updated.toFirestoreFields(
-                    participantCount = loadParticipants(room.id).size,
-                    hostAuthUid = roomDoc.fields().optionalStringField("hostAuthUid"),
-                ),
-                exists = true,
+            roomUpdateWrite(
+                roomId = room.id,
+                fields = buildJsonObject {
+                    put("status", stringValue(MeetingStatus.DATE_CONFIRMED.name))
+                    put("confirmedDate", stringValue(date.toString()))
+                    put("updatedAt", stringValue(Clock.System.now().toKoreaIsoString()))
+                },
+                // 마스크에 있지만 fields에 없는 필드는 삭제된다.
+                clearedFieldPaths = if (dateChanged) listOf("confirmedPlace") else emptyList(),
             ),
         )
         local.confirmDate(room.id, date)
@@ -343,21 +363,14 @@ class WebFirestoreMeetingRepository(
     override suspend fun confirmMeetingWithoutPlace(roomId: String) {
         val room = getRoom(roomId) ?: throw IllegalArgumentException("방 정보를 찾을 수 없습니다.")
         require(room.confirmedDate != null) { "날짜를 먼저 확정해주세요." }
-        val roomDoc = requireNotNull(getDocument("meetingRooms/${room.id}")) { "방 정보를 찾을 수 없습니다." }
-        val updated = room.copy(
-            status = MeetingStatus.MEETING_CONFIRMED,
-            selectedAreaCandidateId = null,
-            confirmedPlace = null,
-            updatedAt = Clock.System.now(),
-        )
         commit(
-            updateWrite(
-                "meetingRooms/${room.id}",
-                updated.toFirestoreFields(
-                    participantCount = loadParticipants(room.id).size,
-                    hostAuthUid = roomDoc.fields().optionalStringField("hostAuthUid"),
-                ),
-                exists = true,
+            roomUpdateWrite(
+                roomId = room.id,
+                fields = buildJsonObject {
+                    put("status", stringValue(MeetingStatus.MEETING_CONFIRMED.name))
+                    put("updatedAt", stringValue(Clock.System.now().toKoreaIsoString()))
+                },
+                clearedFieldPaths = listOf("confirmedPlace"),
             ),
         )
         local.confirmMeetingWithoutPlace(room.id)
@@ -365,19 +378,25 @@ class WebFirestoreMeetingRepository(
 
     override suspend fun saveStartLocation(location: UserStartLocation) {
         val room = getRoom(location.roomId) ?: throw IllegalArgumentException("방 정보를 찾을 수 없습니다.")
-        commit(
-            updateWrite(
-                "meetingRooms/${room.id}/startLocations/${location.participantId}",
-                location.toFirestoreFields(),
-                exists = null,
-            ),
-            updateWrite(
-                "meetingRooms/${room.id}/startLocationSummaries/${location.participantId}",
-                location.toFirestoreSummaryFields(),
-                exists = null,
-            ),
-        )
-        local.saveStartLocation(location.copy(roomId = room.id))
+        roomSync.commitOwnChange(
+            room.id,
+            applyRevision = { it.incremented(RoomSyncCollection.START_LOCATION_SUMMARIES) },
+        ) {
+            commit(
+                updateWrite(
+                    "meetingRooms/${room.id}/startLocations/${location.participantId}",
+                    location.toFirestoreFields(),
+                    exists = null,
+                ),
+                updateWrite(
+                    "meetingRooms/${room.id}/startLocationSummaries/${location.participantId}",
+                    location.toFirestoreSummaryFields(),
+                    exists = null,
+                ),
+                roomTransformWrite(room.id, listOf(syncRevisionFieldPath(RoomSyncCollection.START_LOCATION_SUMMARIES))),
+            )
+            local.saveStartLocation(location.copy(roomId = room.id))
+        }
     }
     override fun saveTransportMode(roomId: String, participantId: String, transportMode: TransportMode) = local.saveTransportMode(roomId, participantId, transportMode)
     override fun saveAreaRecommendations(roomId: String, recommendations: List<AreaRecommendation>) = local.saveAreaRecommendations(roomId, recommendations)
@@ -386,73 +405,70 @@ class WebFirestoreMeetingRepository(
     override fun savePlaceVote(roomId: String, placeId: String, participantId: String, voteType: PlaceVoteType) = local.savePlaceVote(roomId, placeId, participantId, voteType)
     override suspend fun saveDestinationStationProposal(proposal: DestinationStationProposal) {
         val room = getRoom(proposal.roomId) ?: throw IllegalArgumentException("방 정보를 찾을 수 없습니다.")
-        val roomDoc = requireNotNull(getDocument("meetingRooms/${room.id}")) { "방 정보를 찾을 수 없습니다." }
         val normalized = proposal.copy(roomId = room.id)
-        val updatedRoom = room.copy(
-            status = MeetingStatus.PLACE_SELECTING,
-            confirmedPlace = null,
-            updatedAt = proposal.updatedAt,
-        )
-        commit(
-            updateWrite(
-                "meetingRooms/${room.id}",
-                updatedRoom.toFirestoreFields(
-                    participantCount = loadParticipants(room.id).size,
-                    hostAuthUid = roomDoc.fields().optionalStringField("hostAuthUid"),
+        roomSync.commitOwnChange(
+            room.id,
+            applyRevision = { it.incremented(RoomSyncCollection.DESTINATION_STATION_PROPOSALS) },
+        ) {
+            commit(
+                roomUpdateWrite(
+                    roomId = room.id,
+                    fields = buildJsonObject {
+                        put("status", stringValue(MeetingStatus.PLACE_SELECTING.name))
+                        put("updatedAt", stringValue(proposal.updatedAt.toKoreaIsoString()))
+                    },
+                    clearedFieldPaths = listOf("confirmedPlace"),
+                    incrementFieldPaths = listOf(syncRevisionFieldPath(RoomSyncCollection.DESTINATION_STATION_PROPOSALS)),
                 ),
-                exists = true,
-            ),
-            updateWrite(
-                "meetingRooms/${room.id}/destinationStationProposals/${proposal.participantId}",
-                normalized.toFirestoreFields(),
-                exists = null,
-            ),
-        )
-        local.saveDestinationStationProposal(normalized)
+                updateWrite(
+                    "meetingRooms/${room.id}/destinationStationProposals/${proposal.participantId}",
+                    normalized.toFirestoreFields(),
+                    exists = null,
+                ),
+            )
+            local.saveDestinationStationProposal(normalized)
+        }
     }
 
     override suspend fun saveDestinationStationVote(vote: DestinationStationVote) {
         val room = getRoom(vote.roomId) ?: throw IllegalArgumentException("방 정보를 찾을 수 없습니다.")
-        val roomDoc = requireNotNull(getDocument("meetingRooms/${room.id}")) { "방 정보를 찾을 수 없습니다." }
         require(getDestinationStationProposals(room.id).any { it.station.id == vote.stationId }) {
             "현재 후보 목록에 없는 역입니다."
         }
         val normalized = vote.copy(roomId = room.id)
-        val updatedRoom = room.copy(status = MeetingStatus.PLACE_SELECTING, updatedAt = vote.updatedAt)
-        commit(
-            updateWrite(
-                "meetingRooms/${room.id}",
-                updatedRoom.toFirestoreFields(
-                    participantCount = loadParticipants(room.id).size,
-                    hostAuthUid = roomDoc.fields().optionalStringField("hostAuthUid"),
+        roomSync.commitOwnChange(
+            room.id,
+            applyRevision = { it.incremented(RoomSyncCollection.DESTINATION_STATION_VOTES) },
+        ) {
+            commit(
+                roomUpdateWrite(
+                    roomId = room.id,
+                    fields = buildJsonObject {
+                        put("status", stringValue(MeetingStatus.PLACE_SELECTING.name))
+                        put("updatedAt", stringValue(vote.updatedAt.toKoreaIsoString()))
+                    },
+                    incrementFieldPaths = listOf(syncRevisionFieldPath(RoomSyncCollection.DESTINATION_STATION_VOTES)),
                 ),
-                exists = true,
-            ),
-            updateWrite(
-                "meetingRooms/${room.id}/destinationStationVotes/${vote.participantId}",
-                normalized.toFirestoreFields(),
-                exists = null,
-            ),
-        )
-        local.saveDestinationStationVote(normalized)
+                updateWrite(
+                    "meetingRooms/${room.id}/destinationStationVotes/${vote.participantId}",
+                    normalized.toFirestoreFields(),
+                    exists = null,
+                ),
+            )
+            local.saveDestinationStationVote(normalized)
+        }
     }
 
     override suspend fun confirmPlace(roomId: String, place: PlaceCandidate) {
         val room = getRoom(roomId) ?: throw IllegalArgumentException("방 정보를 찾을 수 없습니다.")
-        val roomDoc = requireNotNull(getDocument("meetingRooms/${room.id}")) { "방 정보를 찾을 수 없습니다." }
-        val updated = room.copy(
-            status = MeetingStatus.PLACE_CONFIRMED,
-            confirmedPlace = place,
-            updatedAt = Clock.System.now(),
-        )
         commit(
-            updateWrite(
-                "meetingRooms/${room.id}",
-                updated.toFirestoreFields(
-                    participantCount = loadParticipants(room.id).size,
-                    hostAuthUid = roomDoc.fields().optionalStringField("hostAuthUid"),
-                ),
-                exists = true,
+            roomUpdateWrite(
+                roomId = room.id,
+                fields = buildJsonObject {
+                    put("status", stringValue(MeetingStatus.PLACE_CONFIRMED.name))
+                    put("confirmedPlace", placeCandidateValue(place))
+                    put("updatedAt", stringValue(Clock.System.now().toKoreaIsoString()))
+                },
             ),
         )
         local.confirmPlace(room.id, place)
@@ -469,6 +485,15 @@ class WebFirestoreMeetingRepository(
 
     private suspend fun loadAvailabilities(roomId: String): List<Availability> =
         listDocuments("meetingRooms/$roomId/availabilities").map { it.fields().toAvailability() }
+
+    private suspend fun loadParticipantAvailabilities(roomId: String, participantId: String): List<Availability> =
+        runEqualityQuery(
+            parentPath = "meetingRooms/$roomId",
+            collectionId = "availabilities",
+            allDescendants = false,
+            fieldPath = "participantId",
+            value = participantId,
+        ).map { it.fields().toAvailability() }
 
     private suspend fun loadVisibleStartLocations(roomId: String, currentParticipantId: String): List<UserStartLocation> {
         val ownLocation = getDocument("meetingRooms/$roomId/startLocations/$currentParticipantId")
@@ -503,26 +528,43 @@ class WebFirestoreMeetingRepository(
         return body["documents"]?.jsonArray?.map { it.jsonObject }.orEmpty()
     }
 
-    private suspend fun queryCurrentUserParticipantDocuments(): List<JsonObject> {
+    private suspend fun queryCurrentUserParticipantDocuments(): List<JsonObject> =
+        runEqualityQuery(
+            parentPath = null,
+            collectionId = "participants",
+            allDescendants = true,
+            fieldPath = "authUid",
+            value = currentAuthUid(),
+        )
+
+    private suspend fun runEqualityQuery(
+        parentPath: String?,
+        collectionId: String,
+        allDescendants: Boolean,
+        fieldPath: String,
+        value: String,
+    ): List<JsonObject> {
         val body = buildJsonObject {
             put("structuredQuery", buildJsonObject {
                 put("from", buildJsonArray {
                     add(buildJsonObject {
-                        put("collectionId", "participants")
-                        put("allDescendants", true)
+                        put("collectionId", collectionId)
+                        put("allDescendants", allDescendants)
                     })
                 })
                 put("where", buildJsonObject {
                     put("fieldFilter", buildJsonObject {
-                        put("field", buildJsonObject { put("fieldPath", "authUid") })
+                        put("field", buildJsonObject { put("fieldPath", fieldPath) })
                         put("op", "EQUAL")
-                        put("value", stringValue(currentAuthUid()))
+                        put("value", stringValue(value))
                     })
                 })
             })
         }.toString()
+        val parentUrl = parentPath?.let(::documentUrl)
+            ?: "https://firestore.googleapis.com/v1/projects/${config.projectId}/databases/${config.databaseId}/documents"
         val response = fetch(
-            url = "https://firestore.googleapis.com/v1/projects/${config.projectId}/databases/${config.databaseId}/documents:runQuery",
+            url = "$parentUrl:runQuery",
             init = jsonRequest(RequestMethod.POST, body, currentIdToken()),
         )
         val responseText = response.text()
@@ -577,13 +619,54 @@ class WebFirestoreMeetingRepository(
         put("delete", documentName(path))
     }
 
-    private fun mergeRemoteRoom(remoteRoom: MeetingRoom): MeetingRoom {
-        val localRoom = local.getRoom(remoteRoom.id) ?: return remoteRoom
-        return remoteRoom.copy(
-            selectedAreaCandidateId = localRoom.selectedAreaCandidateId ?: remoteRoom.selectedAreaCandidateId,
-            confirmedPlace = localRoom.confirmedPlace ?: remoteRoom.confirmedPlace,
-        )
+    /**
+     * 방 문서의 지정한 필드만 갱신한다. 전체 교체를 하면 변경 번호 필드가 지워지므로 항상 마스크를 쓴다.
+     * [clearedFieldPaths]는 마스크에만 넣어 필드를 삭제한다.
+     */
+    private fun roomUpdateWrite(
+        roomId: String,
+        fields: JsonObject,
+        clearedFieldPaths: List<String> = emptyList(),
+        incrementFieldPaths: List<String> = emptyList(),
+    ): JsonObject = buildJsonObject {
+        put("update", buildJsonObject {
+            put("name", documentName("meetingRooms/$roomId"))
+            put("fields", fields)
+        })
+        put("updateMask", buildJsonObject {
+            put("fieldPaths", buildJsonArray {
+                (fields.keys + clearedFieldPaths).forEach { add(JsonPrimitive(it)) }
+            })
+        })
+        if (incrementFieldPaths.isNotEmpty()) {
+            put("updateTransforms", incrementTransforms(incrementFieldPaths))
+        }
+        put("currentDocument", buildJsonObject { put("exists", true) })
     }
+
+    private fun roomTransformWrite(roomId: String, incrementFieldPaths: List<String>): JsonObject = buildJsonObject {
+        put("transform", buildJsonObject {
+            put("document", documentName("meetingRooms/$roomId"))
+            put("fieldTransforms", incrementTransforms(incrementFieldPaths))
+        })
+        put("currentDocument", buildJsonObject { put("exists", true) })
+    }
+
+    private fun incrementTransforms(fieldPaths: List<String>): JsonArray = buildJsonArray {
+        fieldPaths.forEach { path ->
+            add(buildJsonObject {
+                put("fieldPath", path)
+                put("increment", integerValue(1))
+            })
+        }
+    }
+
+    private fun syncRevisionFieldPath(collection: RoomSyncCollection): String =
+        "$ROOM_SYNC_REVISIONS_FIELD.${collection.key}"
+
+    // 참여자 ID에는 '-'가 들어가므로 REST 필드 경로에서는 백틱으로 감싸야 한다.
+    private fun availabilityRevisionFieldPath(participantId: String): String =
+        "$ROOM_AVAILABILITY_REVISIONS_FIELD.`${participantId.replace("\\", "\\\\").replace("`", "\\`")}`"
 
     private fun firebaseErrorMessage(status: Int, responseText: String): String {
         val parsed = runCatching { json.parseToJsonElement(responseText).jsonObject }.getOrNull()
@@ -838,6 +921,18 @@ private fun JsonObject.intField(key: String): Int {
 
 private fun JsonObject.optionalIntField(key: String): Int? =
     if (containsKey(key)) intField(key) else null
+
+private fun JsonObject.longMapField(key: String): Map<String, Long> =
+    this[key]?.jsonObject
+        ?.get("mapValue")?.jsonObject
+        ?.get("fields")?.jsonObject
+        ?.mapValues { (_, value) ->
+            val field = value.jsonObject
+            field["integerValue"]?.jsonPrimitive?.content?.toLongOrNull()
+                ?: field["doubleValue"]?.jsonPrimitive?.content?.toDoubleOrNull()?.toLong()
+                ?: 0L
+        }
+        .orEmpty()
 
 private fun JsonObject.boolField(key: String): Boolean =
     this[key]?.jsonObject?.get("booleanValue")?.jsonPrimitive?.content == "true"
