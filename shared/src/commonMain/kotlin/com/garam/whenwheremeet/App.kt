@@ -170,6 +170,14 @@ private fun AppContent() {
             .onFailure { snackbarHostState.showSnackbar("알림 기기를 등록하지 못했어요. 잠시 후 다시 시도해주세요.") }
     }
 
+    // 방 화면 진입 때마다 따로 새로고침하지 않고, 감시 중인 방의 첫 동기화가 최신 데이터를 가져온다.
+    val observedRoomId = appState.observedRoomId
+    LaunchedEffect(appState, observedRoomId, isAuthenticated) {
+        val roomId = observedRoomId ?: return@LaunchedEffect
+        if (!isAuthenticated) return@LaunchedEffect
+        appState.collectRoomUpdates(roomId)
+    }
+
     LaunchedEffect(isAuthenticated, pendingInviteRoomCode, appState) {
         val roomCode = pendingInviteRoomCode ?: return@LaunchedEffect
         if (!isAuthenticated) return@LaunchedEffect
@@ -309,12 +317,6 @@ private fun AppContent() {
                     modifier = Modifier.padding(padding),
                 )
                 is AppRoute.MeetingRoom -> {
-                    LaunchedEffect(route.roomId) {
-                        appState.refreshRoom(route.roomId)
-                    }
-                    LaunchedEffect("room-updates-${route.roomId}") {
-                        appState.collectRoomUpdates(route.roomId)
-                    }
                     val state = appState.roomUiState(route.roomId)
                     if (state == null) {
                         LaunchedEffect(route.roomId) { appState.handleCurrentRoomUnavailable(route.roomId) }
