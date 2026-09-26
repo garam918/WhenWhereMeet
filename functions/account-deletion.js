@@ -1,5 +1,7 @@
 "use strict";
 
+const {FieldPath, FieldValue} = require("firebase-admin/firestore");
+
 const RECENT_LOGIN_MAX_AGE_SECONDS = 15 * 60;
 
 function bearerTokenFrom(request) {
@@ -55,7 +57,7 @@ async function deleteUserData({firestore, auth, uid}) {
     await firestore.recursiveDelete(roomRef);
   }
 
-  const participantCountsByRoom = new Map();
+  const removedParticipantIdsByRoom = new Map();
   const participantRefsToDelete = [];
   let deletedMembershipCount = 0;
   for (const entry of participantEntries) {
@@ -80,23 +82,25 @@ async function deleteUserData({firestore, auth, uid}) {
         entry.roomRef.collection("nicknameKeys").doc(normalizeNicknameKey(participant.nickname)),
       );
     }
-    participantCountsByRoom.set(
-      entry.roomRef.path,
-      (participantCountsByRoom.get(entry.roomRef.path) || 0) + 1,
-    );
+    removedParticipantIdsByRoom.set(entry.roomRef.path, [
+      ...(removedParticipantIdsByRoom.get(entry.roomRef.path) || []),
+      entry.participantDocument.id,
+    ]);
   }
   await deleteReferences(firestore, participantRefsToDelete);
 
-  for (const [roomPath, removedCount] of participantCountsByRoom.entries()) {
+  for (const [roomPath, removedParticipantIds] of removedParticipantIdsByRoom.entries()) {
     const roomRef = firestore.doc(roomPath);
     await firestore.runTransaction(async (transaction) => {
       const snapshot = await transaction.get(roomRef);
       if (!snapshot.exists) return;
       const participantCount = Number(snapshot.data().participantCount) || 1;
-      transaction.update(roomRef, {
-        participantCount: Math.max(1, participantCount - removedCount),
-        updatedAt: new Date().toISOString(),
-      });
+      transaction.update(
+        roomRef,
+        "participantCount", Math.max(1, participantCount - removedParticipantIds.length),
+        "updatedAt", new Date().toISOString(),
+        ...syncRevisionIncrements(removedParticipantIds),
+      );
     });
   }
 
@@ -136,6 +140,26 @@ async function deleteReferences(firestore, references) {
     uniqueReferences.slice(start, start + 450).forEach((reference) => batch.delete(reference));
     await batch.commit();
   }
+}
+
+// Clients skip re-reading subcollections whose revision is unchanged, so deletions must bump them too.
+function syncRevisionIncrements(removedParticipantIds) {
+  const collections = [
+    "participants",
+    "startLocationSummaries",
+    "destinationStationProposals",
+    "destinationStationVotes",
+  ];
+  return [
+    ...collections.flatMap((collection) => [
+      new FieldPath("syncRevisions", collection),
+      FieldValue.increment(1),
+    ]),
+    ...removedParticipantIds.flatMap((participantId) => [
+      new FieldPath("availabilityRevisions", participantId),
+      FieldValue.increment(1),
+    ]),
+  ];
 }
 
 function normalizeNicknameKey(value) {
