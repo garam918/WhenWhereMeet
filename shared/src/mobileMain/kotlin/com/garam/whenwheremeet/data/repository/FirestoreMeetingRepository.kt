@@ -23,25 +23,50 @@ import com.garam.whenwheremeet.platform.KoreaTimeZone
 import dev.gitlive.firebase.Firebase
 import dev.gitlive.firebase.app
 import dev.gitlive.firebase.auth.auth
+import dev.gitlive.firebase.firestore.DocumentSnapshot
+import dev.gitlive.firebase.firestore.FieldPath
+import dev.gitlive.firebase.firestore.FieldValue
 import dev.gitlive.firebase.firestore.FirebaseFirestore
 import dev.gitlive.firebase.firestore.firestore
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.filterNot
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.merge
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.UtcOffset
 import kotlinx.datetime.toInstant
 import kotlinx.datetime.toLocalDateTime
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlin.math.round
+import kotlin.time.Clock
 import kotlin.time.Instant
 
 class FirestoreMeetingRepository(
     private val local: LocalMeetingRepository,
     private val firestore: FirebaseFirestore = Firebase.firestore(Firebase.app, databaseId = FIRESTORE_DATABASE_ID),
 ) : MeetingRepository {
+    private val roomSync = RoomSyncCoordinator(
+        local = local,
+        remote = object : RoomSyncRemoteSource {
+            override suspend fun loadParticipants(roomId: String) =
+                this@FirestoreMeetingRepository.loadParticipants(roomId)
+            override suspend fun loadAvailabilities(roomId: String) =
+                this@FirestoreMeetingRepository.loadAvailabilities(roomId)
+            override suspend fun loadParticipantAvailabilities(roomId: String, participantId: String) =
+                this@FirestoreMeetingRepository.loadParticipantAvailabilities(roomId, participantId)
+            override suspend fun loadVisibleStartLocations(roomId: String, currentParticipantId: String) =
+                this@FirestoreMeetingRepository.loadVisibleStartLocations(roomId, currentParticipantId)
+            override suspend fun loadDestinationStationProposals(roomId: String) =
+                this@FirestoreMeetingRepository.loadDestinationStationProposals(roomId)
+            override suspend fun loadDestinationStationVotes(roomId: String) =
+                this@FirestoreMeetingRepository.loadDestinationStationVotes(roomId)
+        },
+        currentAccountId = { Firebase.auth.currentUser?.uid },
+    )
+
+    override val supportsRealtimeRoomUpdates: Boolean = true
+
     override fun getRooms(): List<MeetingRoom> = local.getRooms()
     override fun getRoom(roomIdOrCode: String): MeetingRoom? = local.getRoom(roomIdOrCode)
     override fun getParticipants(roomId: String): List<Participant> = local.getParticipants(roomId)
@@ -86,41 +111,17 @@ class FirestoreMeetingRepository(
         if (!roomSnapshot.exists) return null
         val room = roomSnapshot.data<FirestoreMeetingRoom>().toDomain()
         val currentParticipant = loadCurrentUserParticipant(room.id)
-        val participants = if (currentParticipant == null) emptyList() else loadParticipants(room.id)
         val currentParticipantId = local.getCurrentParticipantId(room.id) ?: currentParticipant?.id
-        local.importRoom(room, participants, currentParticipantId)
+        local.importRoom(room, listOfNotNull(currentParticipant), currentParticipantId)
         if (currentParticipant != null) {
-            local.importStartLocations(room.id, loadVisibleStartLocations(room.id, currentParticipant.id))
-            local.importDestinationStationProposals(room.id, loadDestinationStationProposals(room.id))
-            local.importDestinationStationVotes(room.id, loadDestinationStationVotes(room.id))
+            applyRoomSnapshot(room.id, roomSnapshot)
         }
-        return room
+        return local.getRoom(room.id) ?: room
     }
 
     override suspend fun refreshRoom(roomId: String) {
-        val localRoom = local.getRoom(roomId)
-        val firestoreRoomId = localRoom?.id ?: roomId.normalizedRoomCode()
-        val roomSnapshot = rooms.document(firestoreRoomId).get()
-        if (!roomSnapshot.exists) {
-            if (localRoom != null) {
-                local.deleteRoom(localRoom.id)
-            }
-            return
-        }
-        val remoteRoom = roomSnapshot.data<FirestoreMeetingRoom>().toDomain()
-        val participants = loadParticipants(remoteRoom.id)
-        local.importRoom(
-            room = mergeRemoteRoom(remoteRoom),
-            participants = participants,
-            currentParticipantId = local.getCurrentParticipantId(remoteRoom.id)
-                ?: participants.firstOrNull { it.accountId == currentAuthUid() }?.id,
-        )
-        local.importAvailabilities(remoteRoom.id, loadAvailabilities(remoteRoom.id))
-        local.getCurrentParticipantId(remoteRoom.id)?.let { participantId ->
-            local.importStartLocations(remoteRoom.id, loadVisibleStartLocations(remoteRoom.id, participantId))
-        }
-        local.importDestinationStationProposals(remoteRoom.id, loadDestinationStationProposals(remoteRoom.id))
-        local.importDestinationStationVotes(remoteRoom.id, loadDestinationStationVotes(remoteRoom.id))
+        val firestoreRoomId = local.getRoom(roomId)?.id ?: roomId.normalizedRoomCode()
+        applyRoomSnapshot(firestoreRoomId, rooms.document(firestoreRoomId).get())
     }
 
     override suspend fun refreshFriends() {
@@ -135,56 +136,23 @@ class FirestoreMeetingRepository(
 
     override fun observeRoom(roomId: String): Flow<Unit> {
         val firestoreRoomId = local.getRoom(roomId)?.id ?: roomId.normalizedRoomCode()
-        val roomRef = rooms.document(firestoreRoomId)
-        val currentParticipantId = local.getCurrentParticipantId(firestoreRoomId)
-        val privateStartLocationFlow = currentParticipantId?.let { participantId ->
-            roomRef.collection(START_LOCATIONS).document(participantId).snapshots.map { snapshot ->
-                importVisibleStartLocations(
-                    roomId = firestoreRoomId,
-                    ownLocation = snapshot.takeIf { it.exists }?.data<FirestoreStartLocation>()?.toDomain(),
-                )
-            }
-        } ?: flowOf(Unit)
-        return merge(
-            roomRef.snapshots.map { snapshot ->
-                if (snapshot.exists) {
-                    local.importRoomMetadata(mergeRemoteRoom(snapshot.data<FirestoreMeetingRoom>().toDomain()))
-                } else {
-                    local.getRoom(firestoreRoomId)?.let { local.deleteRoom(it.id) }
-                }
-                Unit
-            },
-            roomRef.collection(PARTICIPANTS).snapshots.map { snapshot ->
-                local.importParticipants(
-                    firestoreRoomId,
-                    snapshot.documents.map { it.data<FirestoreParticipant>().toDomain() },
-                )
-            },
-            roomRef.collection(AVAILABILITIES).snapshots.map { snapshot ->
-                local.importAvailabilities(
-                    firestoreRoomId,
-                    snapshot.documents.map { it.data<FirestoreAvailability>().toDomain() },
-                )
-            },
-            roomRef.collection(START_LOCATION_SUMMARIES).snapshots.map { snapshot ->
-                importVisibleStartLocations(
-                    roomId = firestoreRoomId,
-                    summaries = snapshot.documents.map { it.data<FirestoreStartLocationSummary>().toDomain() },
-                )
-            },
-            privateStartLocationFlow,
-            roomRef.collection(DESTINATION_STATION_PROPOSALS).snapshots.map { snapshot ->
-                local.importDestinationStationProposals(
-                    firestoreRoomId,
-                    snapshot.documents.map { it.data<FirestoreDestinationStationProposal>().toDomain() },
-                )
-            },
-            roomRef.collection(DESTINATION_STATION_VOTES).snapshots.map { snapshot ->
-                local.importDestinationStationVotes(
-                    firestoreRoomId,
-                    snapshot.documents.map { it.data<FirestoreDestinationStationVote>().toDomain() },
-                )
-            },
+        // 방 문서 하나만 구독하고, 변경 번호가 바뀐 하위 컬렉션만 다시 읽는다.
+        // 내 쓰기의 추정값 스냅숏은 건너뛰고 서버 확정 스냅숏을 기준으로 비교한다.
+        return rooms.document(firestoreRoomId)
+            .snapshots(includeMetadataChanges = true)
+            .filterNot { it.metadata.hasPendingWrites }
+            .map { applyRoomSnapshot(firestoreRoomId, it) }
+    }
+
+    private suspend fun applyRoomSnapshot(roomId: String, snapshot: DocumentSnapshot) {
+        if (!snapshot.exists) {
+            // 캐시에 아직 없는 문서를 삭제로 오인하지 않도록 서버 응답일 때만 로컬에서 지운다.
+            if (!snapshot.metadata.isFromCache) roomSync.removeLocalRoom(roomId)
+            return
+        }
+        roomSync.applyRemoteRoom(
+            remoteRoom = snapshot.data<FirestoreMeetingRoom>().toDomain(),
+            remoteRevisions = snapshot.data<FirestoreRoomSyncFields>().toDomain(),
         )
     }
 
@@ -234,6 +202,8 @@ class FirestoreMeetingRepository(
             }
         }
         local.createRoom(roomToStore, hostToStore.copy(accountId = hostAuthUid), invitedToStore)
+        // 새 방에는 변경 번호 필드가 없으므로(0) 방금 쓴 로컬 데이터가 최신이다.
+        local.saveAppliedRoomSyncRevisions(code, RoomSyncRevisions())
     }
 
     override suspend fun joinRoom(participant: Participant) {
@@ -245,8 +215,9 @@ class FirestoreMeetingRepository(
         val existingParticipant = loadCurrentUserParticipant(room.id)
         if (existingParticipant != null) {
             if (existingParticipant.isInvited) {
-                val participantRef = rooms.document(room.id).collection(PARTICIPANTS).document(existingParticipant.id)
-                val memberRef = rooms.document(room.id).collection(MEMBERS).document(authUid)
+                val roomRef = rooms.document(room.id)
+                val participantRef = roomRef.collection(PARTICIPANTS).document(existingParticipant.id)
+                val memberRef = roomRef.collection(MEMBERS).document(authUid)
                 firestore.runTransaction {
                     val storedParticipant = get(participantRef).data<FirestoreParticipant>()
                     val storedMember = get(memberRef).data<FirestoreRoomMember>()
@@ -261,9 +232,13 @@ class FirestoreMeetingRepository(
                         memberRef,
                         storedMember.copy(joined = true, updatedAt = participant.joinedAt.toKoreaIsoString()),
                     )
+                    updateFields(roomRef) {
+                        syncRevisionPath(RoomSyncCollection.PARTICIPANTS) to FieldValue.increment(1)
+                    }
                 }
             }
-            local.importRoom(room, loadParticipants(room.id), existingParticipant.id)
+            // 참여자 목록은 방 화면의 동기화가 변경 번호를 보고 다시 받는다.
+            local.importRoom(room, local.getParticipants(room.id).ifEmpty { listOf(existingParticipant) }, existingParticipant.id)
             return
         }
         firestore.runTransaction {
@@ -274,7 +249,11 @@ class FirestoreMeetingRepository(
             require(current.participantCount < current.maxParticipants) { "정원이 가득 차서 참여할 수 없습니다." }
             val nicknameRef = roomRef.collection(NICKNAMES).document(nicknameKey)
             require(!get(nicknameRef).exists) { "이미 사용 중인 닉네임입니다." }
-            set(roomRef, current.copy(participantCount = current.participantCount + 1, updatedAt = participant.joinedAt.toKoreaIsoString()))
+            updateFields(roomRef) {
+                "participantCount" to current.participantCount + 1
+                "updatedAt" to participant.joinedAt.toKoreaIsoString()
+                syncRevisionPath(RoomSyncCollection.PARTICIPANTS) to FieldValue.increment(1)
+            }
             set(roomRef.collection(PARTICIPANTS).document(participant.id), FirestoreParticipant.from(participantToStore, authUid = authUid))
             set(
                 roomRef.collection(MEMBERS).document(authUid),
@@ -282,11 +261,9 @@ class FirestoreMeetingRepository(
             )
             set(nicknameRef, FirestoreNickname(participantId = participant.id))
         }
-        local.importRoom(
-            room,
-            (loadParticipants(room.id) + participantToStore.copy(accountId = authUid)).distinctBy { it.id },
-            participant.id,
-        )
+        // 새로 참여한 방은 적용된 변경 번호를 비워 방 화면에서 전체를 한 번 받게 한다.
+        local.importRoom(room, listOf(participantToStore.copy(accountId = authUid)), participant.id)
+        local.removeAppliedRoomSyncRevisions(room.id)
     }
 
     override suspend fun leaveRoom(roomId: String, participantId: String) {
@@ -294,20 +271,19 @@ class FirestoreMeetingRepository(
         require(room.hostParticipantId != participantId) { "방장은 방을 나갈 수 없습니다." }
         val participant = getParticipants(roomId).firstOrNull { it.id == participantId }
             ?: throw IllegalArgumentException("참여자 정보를 찾을 수 없습니다.")
-        val participantAvailabilities = loadAvailabilities(room.id).filter { it.participantId == participantId }
+        val participantAvailabilities = loadParticipantAvailabilities(room.id, participantId)
         firestore.runTransaction {
             val roomRef = rooms.document(room.id)
             val roomSnapshot = get(roomRef)
             require(roomSnapshot.exists) { "방 정보를 찾을 수 없습니다." }
             val current = roomSnapshot.data<FirestoreMeetingRoom>()
-            val now = kotlin.time.Clock.System.now()
-            set(
-                roomRef,
-                current.copy(
-                    participantCount = (current.participantCount - 1).coerceAtLeast(1),
-                    updatedAt = now.toKoreaIsoString(),
-                ),
-            )
+            val now = Clock.System.now()
+            updateFields(roomRef) {
+                "participantCount" to (current.participantCount - 1).coerceAtLeast(1)
+                "updatedAt" to now.toKoreaIsoString()
+                RoomSyncCollection.entries.forEach { syncRevisionPath(it) to FieldValue.increment(1) }
+                availabilityRevisionPath(participantId) to FieldValue.increment(1)
+            }
             delete(roomRef.collection(PARTICIPANTS).document(participantId))
             delete(roomRef.collection(MEMBERS).document(currentAuthUid()))
             delete(roomRef.collection(NICKNAMES).document(participant.nickname.nicknameKey()))
@@ -333,73 +309,72 @@ class FirestoreMeetingRepository(
 
     override suspend fun saveAvailabilities(roomId: String, participantId: String, values: Map<LocalDate, AvailabilityStatus>) {
         val room = getRoom(roomId) ?: throw IllegalArgumentException("방 정보를 찾을 수 없습니다.")
-        val previous = loadAvailabilities(room.id).filter { it.participantId == participantId }
-        val batch = firestore.batch()
-        previous
-            .filterNot { values.containsKey(it.date) }
-            .forEach { batch.delete(availabilityDocument(room.id, participantId, it.date)) }
-        values.forEach { (date, status) ->
-            batch.set(
-                availabilityDocument(room.id, participantId, date),
-                FirestoreAvailability.from(Availability(room.id, participantId, date, status, kotlin.time.Clock.System.now())),
-            )
+        val previous = local.getAvailabilities(room.id)
+            .filter { it.participantId == participantId }
+            .associate { it.date to it.status }
+        // 로컬 캐시와 비교해 바뀐 날짜만 쓴다. 로컬은 변경 번호 동기화로 최신 상태를 유지한다.
+        val changes = AvailabilityChanges.between(previous, values)
+        if (changes.isEmpty) return
+        roomSync.commitOwnChange(room.id, applyRevision = { it.incrementedAvailability(participantId) }) {
+            val now = Clock.System.now()
+            val batch = firestore.batch()
+            changes.deletedDates.forEach { batch.delete(availabilityDocument(room.id, participantId, it)) }
+            changes.upserts.forEach { (date, status) ->
+                batch.set(
+                    availabilityDocument(room.id, participantId, date),
+                    FirestoreAvailability.from(Availability(room.id, participantId, date, status, now)),
+                )
+            }
+            batch.updateFields(rooms.document(room.id)) {
+                availabilityRevisionPath(participantId) to FieldValue.increment(1)
+            }
+            batch.commit()
+            local.saveAvailabilities(room.id, participantId, values)
         }
-        batch.commit()
-        local.saveAvailabilities(room.id, participantId, values)
     }
     override suspend fun confirmDate(roomId: String, date: LocalDate) {
         val room = getRoom(roomId) ?: throw IllegalArgumentException("방 정보를 찾을 수 없습니다.")
         val dateChanged = room.confirmedDate != null && room.confirmedDate != date
-        val updated = room.copy(
-            status = MeetingStatus.DATE_CONFIRMED,
-            confirmedDate = date,
-            selectedAreaCandidateId = if (dateChanged) null else room.selectedAreaCandidateId,
-            confirmedPlace = if (dateChanged) null else room.confirmedPlace,
-            updatedAt = kotlin.time.Clock.System.now(),
-        )
-        val previous = rooms.document(room.id).get().data<FirestoreMeetingRoom>()
-        rooms.document(room.id).set(
-            FirestoreMeetingRoom.from(
-                room = updated,
-                participantCount = loadParticipants(room.id).size,
-                hostAuthUid = previous.hostAuthUid,
-            ),
-        )
+        rooms.document(room.id).updateFields {
+            "status" to MeetingStatus.DATE_CONFIRMED.name
+            "confirmedDate" to date.toString()
+            if (dateChanged) "confirmedPlace" to (null as FirestorePlaceCandidate?)
+            "updatedAt" to Clock.System.now().toKoreaIsoString()
+        }
         local.confirmDate(room.id, date)
     }
     override suspend fun confirmMeetingWithoutPlace(roomId: String) {
         val room = getRoom(roomId) ?: throw IllegalArgumentException("방 정보를 찾을 수 없습니다.")
         require(room.confirmedDate != null) { "날짜를 먼저 확정해주세요." }
-        val previous = rooms.document(room.id).get().data<FirestoreMeetingRoom>()
-        val updated = room.copy(
-            status = MeetingStatus.MEETING_CONFIRMED,
-            selectedAreaCandidateId = null,
-            confirmedPlace = null,
-            updatedAt = kotlin.time.Clock.System.now(),
-        )
-        rooms.document(room.id).set(
-            FirestoreMeetingRoom.from(
-                room = updated,
-                participantCount = loadParticipants(room.id).size,
-                hostAuthUid = previous.hostAuthUid,
-            ),
-        )
+        rooms.document(room.id).updateFields {
+            "status" to MeetingStatus.MEETING_CONFIRMED.name
+            "confirmedPlace" to (null as FirestorePlaceCandidate?)
+            "updatedAt" to Clock.System.now().toKoreaIsoString()
+        }
         local.confirmMeetingWithoutPlace(room.id)
     }
     override suspend fun saveStartLocation(location: UserStartLocation) {
         val room = getRoom(location.roomId) ?: throw IllegalArgumentException("방 정보를 찾을 수 없습니다.")
         val roomRef = rooms.document(room.id)
-        val batch = firestore.batch()
-        batch.set(
-            roomRef.collection(START_LOCATIONS).document(location.participantId),
-            FirestoreStartLocation.from(location),
-        )
-        batch.set(
-            roomRef.collection(START_LOCATION_SUMMARIES).document(location.participantId),
-            FirestoreStartLocationSummary.from(location),
-        )
-        batch.commit()
-        local.saveStartLocation(location)
+        roomSync.commitOwnChange(
+            room.id,
+            applyRevision = { it.incremented(RoomSyncCollection.START_LOCATION_SUMMARIES) },
+        ) {
+            val batch = firestore.batch()
+            batch.set(
+                roomRef.collection(START_LOCATIONS).document(location.participantId),
+                FirestoreStartLocation.from(location),
+            )
+            batch.set(
+                roomRef.collection(START_LOCATION_SUMMARIES).document(location.participantId),
+                FirestoreStartLocationSummary.from(location),
+            )
+            batch.updateFields(roomRef) {
+                syncRevisionPath(RoomSyncCollection.START_LOCATION_SUMMARIES) to FieldValue.increment(1)
+            }
+            batch.commit()
+            local.saveStartLocation(location)
+        }
     }
     override fun saveTransportMode(roomId: String, participantId: String, transportMode: TransportMode) = local.saveTransportMode(roomId, participantId, transportMode)
     override fun saveAreaRecommendations(roomId: String, recommendations: List<AreaRecommendation>) = local.saveAreaRecommendations(roomId, recommendations)
@@ -409,24 +384,25 @@ class FirestoreMeetingRepository(
     override suspend fun saveDestinationStationProposal(proposal: DestinationStationProposal) {
         val room = getRoom(proposal.roomId) ?: throw IllegalArgumentException("방 정보를 찾을 수 없습니다.")
         val roomRef = rooms.document(room.id)
-        val previous = roomRef.get().data<FirestoreMeetingRoom>()
         val normalized = proposal.copy(roomId = room.id)
-        val updatedRoom = room.copy(
-            status = MeetingStatus.PLACE_SELECTING,
-            confirmedPlace = null,
-            updatedAt = proposal.updatedAt,
-        )
-        val batch = firestore.batch()
-        batch.set(
-            roomRef,
-            FirestoreMeetingRoom.from(updatedRoom, loadParticipants(room.id).size, previous.hostAuthUid),
-        )
-        batch.set(
-            roomRef.collection(DESTINATION_STATION_PROPOSALS).document(proposal.participantId),
-            FirestoreDestinationStationProposal.from(normalized),
-        )
-        batch.commit()
-        local.saveDestinationStationProposal(normalized)
+        roomSync.commitOwnChange(
+            room.id,
+            applyRevision = { it.incremented(RoomSyncCollection.DESTINATION_STATION_PROPOSALS) },
+        ) {
+            val batch = firestore.batch()
+            batch.updateFields(roomRef) {
+                "status" to MeetingStatus.PLACE_SELECTING.name
+                "confirmedPlace" to (null as FirestorePlaceCandidate?)
+                "updatedAt" to proposal.updatedAt.toKoreaIsoString()
+                syncRevisionPath(RoomSyncCollection.DESTINATION_STATION_PROPOSALS) to FieldValue.increment(1)
+            }
+            batch.set(
+                roomRef.collection(DESTINATION_STATION_PROPOSALS).document(proposal.participantId),
+                FirestoreDestinationStationProposal.from(normalized),
+            )
+            batch.commit()
+            local.saveDestinationStationProposal(normalized)
+        }
     }
 
     override suspend fun saveDestinationStationVote(vote: DestinationStationVote) {
@@ -435,37 +411,33 @@ class FirestoreMeetingRepository(
             "현재 후보 목록에 없는 역입니다."
         }
         val roomRef = rooms.document(room.id)
-        val previous = roomRef.get().data<FirestoreMeetingRoom>()
         val normalized = vote.copy(roomId = room.id)
-        val updatedRoom = room.copy(status = MeetingStatus.PLACE_SELECTING, updatedAt = vote.updatedAt)
-        val batch = firestore.batch()
-        batch.set(
-            roomRef,
-            FirestoreMeetingRoom.from(updatedRoom, loadParticipants(room.id).size, previous.hostAuthUid),
-        )
-        batch.set(
-            roomRef.collection(DESTINATION_STATION_VOTES).document(vote.participantId),
-            FirestoreDestinationStationVote.from(normalized),
-        )
-        batch.commit()
-        local.saveDestinationStationVote(normalized)
+        roomSync.commitOwnChange(
+            room.id,
+            applyRevision = { it.incremented(RoomSyncCollection.DESTINATION_STATION_VOTES) },
+        ) {
+            val batch = firestore.batch()
+            batch.updateFields(roomRef) {
+                "status" to MeetingStatus.PLACE_SELECTING.name
+                "updatedAt" to vote.updatedAt.toKoreaIsoString()
+                syncRevisionPath(RoomSyncCollection.DESTINATION_STATION_VOTES) to FieldValue.increment(1)
+            }
+            batch.set(
+                roomRef.collection(DESTINATION_STATION_VOTES).document(vote.participantId),
+                FirestoreDestinationStationVote.from(normalized),
+            )
+            batch.commit()
+            local.saveDestinationStationVote(normalized)
+        }
     }
 
     override suspend fun confirmPlace(roomId: String, place: PlaceCandidate) {
         val room = getRoom(roomId) ?: throw IllegalArgumentException("방 정보를 찾을 수 없습니다.")
-        val previous = rooms.document(room.id).get().data<FirestoreMeetingRoom>()
-        val updated = room.copy(
-            status = MeetingStatus.PLACE_CONFIRMED,
-            confirmedPlace = place,
-            updatedAt = kotlin.time.Clock.System.now(),
-        )
-        rooms.document(room.id).set(
-            FirestoreMeetingRoom.from(
-                room = updated,
-                participantCount = loadParticipants(room.id).size,
-                hostAuthUid = previous.hostAuthUid,
-            ),
-        )
+        rooms.document(room.id).updateFields {
+            "status" to MeetingStatus.PLACE_CONFIRMED.name
+            "confirmedPlace" to FirestorePlaceCandidate.from(place)
+            "updatedAt" to Clock.System.now().toKoreaIsoString()
+        }
         local.confirmPlace(room.id, place)
     }
 
@@ -485,6 +457,14 @@ class FirestoreMeetingRepository(
     private suspend fun loadAvailabilities(roomId: String): List<Availability> =
         rooms.document(roomId).collection(AVAILABILITIES).get().documents.map { it.data<FirestoreAvailability>().toDomain() }
 
+    private suspend fun loadParticipantAvailabilities(roomId: String, participantId: String): List<Availability> =
+        rooms.document(roomId)
+            .collection(AVAILABILITIES)
+            .where { "participantId" equalTo participantId }
+            .get()
+            .documents
+            .map { it.data<FirestoreAvailability>().toDomain() }
+
     private suspend fun loadVisibleStartLocations(roomId: String, currentParticipantId: String): List<UserStartLocation> {
         val roomRef = rooms.document(roomId)
         val ownSnapshot = roomRef.collection(START_LOCATIONS).document(currentParticipantId).get()
@@ -494,18 +474,6 @@ class FirestoreMeetingRepository(
             .documents
             .map { it.data<FirestoreStartLocationSummary>().toDomain() }
         return mergeVisibleStartLocations(ownLocation, summaries)
-    }
-
-    private fun importVisibleStartLocations(
-        roomId: String,
-        ownLocation: UserStartLocation? = local.getStartLocations(roomId).firstOrNull {
-            it.participantId == local.getCurrentParticipantId(roomId)
-        },
-        summaries: List<UserStartLocation> = local.getStartLocations(roomId).filter {
-            it.participantId != local.getCurrentParticipantId(roomId)
-        },
-    ) {
-        local.importStartLocations(roomId, mergeVisibleStartLocations(ownLocation, summaries))
     }
 
     private fun mergeVisibleStartLocations(
@@ -529,13 +497,11 @@ class FirestoreMeetingRepository(
     private fun availabilityDocument(roomId: String, participantId: String, date: LocalDate) =
         rooms.document(roomId).collection(AVAILABILITIES).document("$participantId-${date}")
 
-    private fun mergeRemoteRoom(remoteRoom: MeetingRoom): MeetingRoom {
-        val localRoom = local.getRoom(remoteRoom.id) ?: return remoteRoom
-        return remoteRoom.copy(
-            selectedAreaCandidateId = localRoom.selectedAreaCandidateId ?: remoteRoom.selectedAreaCandidateId,
-            confirmedPlace = localRoom.confirmedPlace ?: remoteRoom.confirmedPlace,
-        )
-    }
+    private fun syncRevisionPath(collection: RoomSyncCollection) =
+        FieldPath(ROOM_SYNC_REVISIONS_FIELD, collection.key)
+
+    private fun availabilityRevisionPath(participantId: String) =
+        FieldPath(ROOM_AVAILABILITY_REVISIONS_FIELD, participantId)
 
     private suspend fun ensureCurrentUserCanDeleteRoom(room: MeetingRoom) {
         val currentUid = currentAuthUid()
@@ -647,6 +613,17 @@ private data class FirestoreMeetingRoom(
             updatedAt = room.updatedAt.toKoreaIsoString(),
         )
     }
+}
+
+// FirestoreMeetingRoom과 분리해, 방 문서를 쓸 때 변경 번호가 함께 덮어써지지 않게 한다.
+@Serializable
+private data class FirestoreRoomSyncFields(
+    @SerialName(ROOM_SYNC_REVISIONS_FIELD)
+    val syncRevisions: Map<String, Long> = emptyMap(),
+    @SerialName(ROOM_AVAILABILITY_REVISIONS_FIELD)
+    val availabilityRevisions: Map<String, Long> = emptyMap(),
+) {
+    fun toDomain() = RoomSyncRevisions(collections = syncRevisions, availabilities = availabilityRevisions)
 }
 
 @Serializable
