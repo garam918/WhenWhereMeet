@@ -58,6 +58,7 @@ import com.garam.whenwheremeet.domain.usecase.KakaoMapRouteUrlBuilder
 import com.garam.whenwheremeet.domain.usecase.toConfirmedStationPlace
 import com.garam.whenwheremeet.platform.currentLocalDate
 import kotlinx.coroutines.flow.collect
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.datetime.LocalDate
 import kotlin.random.Random
 import kotlin.time.Clock
@@ -174,6 +175,18 @@ class MeetingAppState(
     private var isCalculatingAreas by mutableStateOf(false)
     private var isSearchingPlaces by mutableStateOf(false)
     private var lastManualRefreshAt: Instant? = null
+    private var lastOpenedRoomId by mutableStateOf<String?>(null)
+
+    /**
+     * 변경을 감시할 방. 실시간 리스너는 변경분만 과금되므로 화면을 벗어나도 마지막으로 연 방을 계속 감시하고,
+     * 폴링 방식은 방 화면에 있을 때만 감시한다.
+     */
+    val observedRoomId: String?
+        get() = if (repository.supportsRealtimeRoomUpdates) {
+            lastOpenedRoomId
+        } else {
+            (route as? AppRoute.MeetingRoom)?.roomId
+        }
 
     fun homeUiState(): HomeDashboardUiState {
         revision
@@ -440,6 +453,7 @@ class MeetingAppState(
         val participantId = repository.getCurrentParticipantId(roomId) ?: return
         runCatching { repository.leaveRoom(roomId, participantId) }
             .onSuccess {
+                stopObservingRoom(roomId)
                 revision++
                 backStack = emptyList()
                 route = AppRoute.Home
@@ -456,6 +470,7 @@ class MeetingAppState(
         }
         runCatching { repository.deleteRoom(roomId) }
             .onSuccess {
+                stopObservingRoom(roomId)
                 revision++
                 backStack = emptyList()
                 route = AppRoute.Home
@@ -464,13 +479,9 @@ class MeetingAppState(
             .onFailure { emitMessage(it.meetingRepositoryErrorMessage("약속을 삭제하지 못했습니다.")) }
     }
 
-    suspend fun refreshRoom(roomId: String) {
-        runCatching { repository.refreshRoom(roomId) }
-            .onSuccess { revision++ }
-    }
-
     fun handleCurrentRoomUnavailable(roomId: String) {
         if (route != AppRoute.MeetingRoom(roomId)) return
+        stopObservingRoom(roomId)
         backStack = emptyList()
         route = AppRoute.Home
         revision++
@@ -478,9 +489,21 @@ class MeetingAppState(
     }
 
     suspend fun collectRoomUpdates(roomId: String) {
-        repository.observeRoom(roomId).collect {
-            revision++
+        try {
+            repository.observeRoom(roomId).collect {
+                revision++
+            }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Throwable) {
+            // 감시 대상을 비워 두면 방에 다시 들어올 때 감시가 새로 시작된다.
+            stopObservingRoom(roomId)
+            emitMessage(error.meetingRepositoryErrorMessage("약속방 정보를 새로 불러오지 못했어요. 다시 들어와 주세요."))
         }
+    }
+
+    private fun stopObservingRoom(roomId: String) {
+        if (lastOpenedRoomId == roomId) lastOpenedRoomId = null
     }
 
     suspend fun refreshDashboard() {
@@ -966,6 +989,7 @@ class MeetingAppState(
         selectedDate = null
         locationSearchResults = emptyList()
         destinationStationSearchResults = emptyList()
+        lastOpenedRoomId = roomId
         navigateTo(AppRoute.MeetingRoom(roomId), replaceCurrent = replaceCurrent)
     }
 
