@@ -1,6 +1,8 @@
 package com.garam.whenwheremeet.data.repository
 
 import com.garam.whenwheremeet.data.local.KeyValueStorage
+import com.garam.whenwheremeet.domain.model.Availability
+import com.garam.whenwheremeet.domain.model.AvailabilityStatus
 import com.garam.whenwheremeet.domain.model.MeetingRoom
 import com.garam.whenwheremeet.domain.model.DestinationStationProposal
 import com.garam.whenwheremeet.domain.model.DestinationStationVote
@@ -300,6 +302,52 @@ class LocalMeetingRepositoryTest {
         createdAt = now,
         updatedAt = now,
     )
+
+    @Test
+    fun appliedSyncRevisionsPersistWithCacheAndAreClearedWithRoom() = runTest {
+        val storage = MemoryStorage()
+        val repository = LocalMeetingRepository(storage)
+        val now = Instant.parse("2026-06-01T00:00:00Z")
+        val room = MeetingRoom(
+            id = "room",
+            title = "테스트",
+            meetingType = MeetingType.MEAL,
+            dateRangeStart = LocalDate(2026, 6, 20),
+            dateRangeEnd = LocalDate(2026, 6, 21),
+            minParticipants = 1,
+            maxParticipants = 2,
+            hostParticipantId = "host",
+            status = MeetingStatus.COLLECTING_AVAILABILITY,
+            createdAt = now,
+            updatedAt = now,
+        )
+        repository.createRoom(room, Participant("host", room.id, "방장", true, now))
+        val revisions = RoomSyncRevisions(availabilities = mapOf("host" to 3L))
+        repository.saveAppliedRoomSyncRevisions(room.id, revisions)
+
+        assertEquals(revisions, LocalMeetingRepository(storage).getAppliedRoomSyncRevisions(room.id))
+
+        repository.retainRooms(emptySet())
+        assertEquals(null, repository.getAppliedRoomSyncRevisions(room.id))
+    }
+
+    @Test
+    fun replacingParticipantAvailabilitiesKeepsOtherParticipants() = runTest {
+        val repository = LocalMeetingRepository(MemoryStorage())
+        val now = Instant.parse("2026-06-01T00:00:00Z")
+        val date = LocalDate(2026, 6, 20)
+        repository.importAvailabilities(
+            "room",
+            listOf(
+                Availability("room", "host", date, AvailabilityStatus.AVAILABLE, now),
+                Availability("room", "guest", date, AvailabilityStatus.MAYBE, now),
+            ),
+        )
+
+        repository.replaceParticipantAvailabilities("room", setOf("guest"), emptyList())
+
+        assertEquals(listOf("host"), repository.getAvailabilities("room").map { it.participantId })
+    }
 
     private class MemoryStorage : KeyValueStorage {
         private val values = mutableMapOf<String, String>()
