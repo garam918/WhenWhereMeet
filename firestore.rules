@@ -62,14 +62,31 @@ service cloud.firestore {
         && data.participantCount >= 1
         && data.participantCount <= data.maxParticipants
         && data.maxParticipants >= 2
-        && data.maxParticipants <= 8;
+        && data.maxParticipants <= 8
+        && data.get('syncRevisions', {}) is map
+        && data.get('availabilityRevisions', {}) is map;
+    }
+
+    // Clients compare these revision counters to skip re-reading unchanged subcollections.
+    // Members may bump only their own availability revision.
+    function changesOnlyOwnAvailabilityRevision(roomId) {
+      return request.resource.data.get('availabilityRevisions', {})
+        .diff(resource.data.get('availabilityRevisions', {}))
+        .affectedKeys()
+        .hasOnly([get(memberPath(roomId, request.auth.uid)).data.participantId]);
+    }
+
+    function isSyncRevisionUpdate(roomId) {
+      return isRoomMember(roomId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['syncRevisions', 'availabilityRevisions'])
+        && changesOnlyOwnAvailabilityRevision(roomId);
     }
 
     function isJoiningRoom(roomId) {
       return !isRoomMember(roomId)
         && isRoomMemberAfter(roomId)
         && request.resource.data.participantCount == resource.data.participantCount + 1
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['participantCount', 'updatedAt']);
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['participantCount', 'updatedAt', 'syncRevisions']);
     }
 
     function isLeavingRoom(roomId) {
@@ -77,7 +94,10 @@ service cloud.firestore {
         && !existsAfter(memberPath(roomId, request.auth.uid))
         && resource.data.hostAuthUid != request.auth.uid
         && request.resource.data.participantCount == resource.data.participantCount - 1
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['participantCount', 'updatedAt']);
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'participantCount', 'updatedAt', 'syncRevisions', 'availabilityRevisions'
+        ])
+        && changesOnlyOwnAvailabilityRevision(roomId);
     }
 
     function isParticipantWorkflowUpdate(roomId) {
@@ -85,7 +105,9 @@ service cloud.firestore {
         && !(resource.data.status in ['PLACE_CONFIRMED', 'MEETING_CONFIRMED'])
         && request.resource.data.status == 'PLACE_SELECTING'
         && request.resource.data.get('confirmedPlace', null) == null
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'confirmedPlace', 'updatedAt']);
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status', 'confirmedPlace', 'updatedAt', 'syncRevisions'
+        ]);
     }
 
     function validParticipant(roomId, participantId, data) {
@@ -169,6 +191,7 @@ service cloud.firestore {
           || isJoiningRoom(roomId)
           || isLeavingRoom(roomId)
           || isParticipantWorkflowUpdate(roomId)
+          || isSyncRevisionUpdate(roomId)
         );
       allow delete: if isRoomHost(roomId);
 
